@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react'
 import { PROVIDERS, WF_ROLES, seedSkills, seedProjects, initialWizardData } from './seed'
 import { planScript } from '../lib/plan'
+import { api } from './api'
 import type {
   OrchestraState,
   Project,
@@ -78,7 +79,14 @@ function makeInitialState(): OrchestraState {
     newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['web-search'] },
     skills: seedSkills.map((s) => ({ ...s })),
     projects: seedProjects.map((p) => ({ ...p })),
+    agentsConfigured: false,
+    hydrated: false,
   }
+}
+
+// Map a mutation across the ticket with `id` in whichever project holds it.
+function mapTicketAcross(projects: Project[], id: string, fn: (t: Ticket) => Ticket): Project[] {
+  return projects.map((p) => ({ ...p, tickets: p.tickets.map((t) => (t.id === id ? fn(t) : t)) }))
 }
 
 export function useOrchestraStore() {
@@ -163,6 +171,27 @@ export function useOrchestraStore() {
     // seed default flows for projects that have none
     setState((s) => ({ projects: s.projects.map((p) => (p.flows ? p : { ...p, flows: buildDefaultFlows(p) })) }))
 
+    // Hydrate from the backend (system of record). Falls back to the seed if
+    // the server isn't reachable so the app still works standalone.
+    api
+      .getState()
+      .then((data) => {
+        const projects = data.projects.map((p) => (p.flows ? p : { ...p, flows: buildDefaultFlows(p) }))
+        setState((s) => {
+          const stillValid = projects.some((p) => p.id === s.currentProjectId)
+          const cur = stillValid ? s.currentProjectId : projects[0]?.id || s.currentProjectId
+          return {
+            projects,
+            skills: data.skills,
+            ticketSeq: data.ticketSeq,
+            agentsConfigured: data.agentsConfigured,
+            hydrated: true,
+            currentProjectId: cur,
+          }
+        })
+      })
+      .catch(() => setState({ hydrated: true }))
+
     return () => {
       mq.removeEventListener('change', onMq)
       window.removeEventListener('pointermove', onFlowMove)
@@ -177,12 +206,30 @@ export function useOrchestraStore() {
     return s.projects.find((p) => p.id === s.currentProjectId) || s.projects[0]
   }, [])
 
+  // Debounced persistence of the current project's config (design.md,
+  // instructions, envs, roles, integrations, flows, agent role assignments).
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const persistProjectSoon = useCallback(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current)
+    persistTimer.current = setTimeout(() => {
+      const p = curProj()
+      if (!p) return
+      api.patchProject(p.id, p)
+      // agents live in their own rows — upsert them so role/config edits persist
+      p.agents.forEach((a) => api.createAgent(p.id, a))
+    }, 300)
+  }, [curProj])
+
   const updateProj = useCallback(
     (fn: (p: Project) => Project) => {
       setState((s) => ({ projects: s.projects.map((p) => (p.id !== s.currentProjectId ? p : fn(p))) }))
+      persistProjectSoon()
     },
-    [setState],
+    [setState, persistProjectSoon],
   )
+
+  // live agent run streams, keyed by ticket id
+  const streamsRef = useRef<Map<string, EventSource>>(new Map())
 
   const ticketTeam = useCallback((t: Ticket): string[] => {
     return t.agentIds && t.agentIds.length ? t.agentIds : t.agentId ? [t.agentId] : []
@@ -247,8 +294,9 @@ export function useOrchestraStore() {
           ),
         }
       })
+      persistProjectSoon()
     },
-    [setState],
+    [setState, persistProjectSoon],
   )
   const addFlowNode = useCallback(
     (kind: string) => {
@@ -344,6 +392,7 @@ export function useOrchestraStore() {
           { type: 'message', phase: 'plan', actor: first ? first.id : null, time: 'gerade eben', action: 'importierte aus Jira', text: 'Ticket ' + item.key + ' aus Jira übernommen. Ich starte mit der Planung.' },
         ],
       }
+      api.createTicket(proj.id, ticket, seq)
       return {
         ticketSeq: seq,
         projects: s.projects.map((p) =>
@@ -351,7 +400,8 @@ export function useOrchestraStore() {
         ),
       }
     })
-  }, [setState])
+    persistProjectSoon()
+  }, [setState, persistProjectSoon])
   const setDesignMd = useCallback((e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, designMd: v })) }, [updateProj])
   const setInstructions = useCallback((e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, instructions: v })) }, [updateProj])
   const addEnv = useCallback(() => updateProj((p) => ({ ...p, envs: [...(p.envs || []), { key: '', value: '' }] })), [updateProj])
@@ -403,6 +453,7 @@ export function useOrchestraStore() {
     }
     proj.flows = buildDefaultFlows(proj)
     setState((s) => ({ projects: [...s.projects, proj], currentProjectId: id, projectModalOpen: false, switcherOpen: false, activeTicket: null, view: 'dashboard' }))
+    api.createProject(proj)
   }, [setState])
 
   // ---- create agent ----
@@ -427,16 +478,22 @@ export function useOrchestraStore() {
     const na = stateRef.current.newAgent
     const name = na.name.trim() || 'Neuer Agent'
     const agent = { id: 'x' + Date.now(), name, role: na.role.trim() || 'Custom Agent', wf: 'Sonstige', provider: na.provider, status: 'idle' as const, skills: na.skills.length ? na.skills : ['web-search'], hue: 240 + Math.floor(Math.random() * 120) }
+    const projectId = stateRef.current.currentProjectId
     setState((s) => ({
       projects: s.projects.map((p) => (p.id === s.currentProjectId ? { ...p, agents: [...p.agents, agent] } : p)),
       createOpen: false,
       view: 'agents',
       newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['web-search'] },
     }))
+    api.createAgent(projectId, agent)
   }, [setState])
 
   // ---- skills ----
-  const toggleSkillInstall = useCallback((name: string) => setState((s) => ({ skills: s.skills.map((k) => (k.name === name ? { ...k, installed: !k.installed } : k)) })), [setState])
+  const toggleSkillInstall = useCallback((name: string) => {
+    let next = false
+    setState((s) => { const cur = s.skills.find((k) => k.name === name); next = !cur?.installed; return { skills: s.skills.map((k) => (k.name === name ? { ...k, installed: !k.installed } : k)) } })
+    api.setSkillInstalled(name, next)
+  }, [setState])
   const setSkillInput = useCallback((e: any) => setState({ skillInput: e.target.value }), [setState])
   const installSkill = useCallback(() => {
     let raw = stateRef.current.skillInput.trim()
@@ -447,6 +504,7 @@ export function useOrchestraStore() {
       if (ex) return { skills: s.skills.map((k) => (k.name === raw ? { ...k, installed: true } : k)), skillInput: '' }
       return { skills: [{ name: raw, cat: 'Eigene', desc: 'Selbst installiert aus der skills.sh Registry.', installs: 'neu', installed: true }, ...s.skills], skillInput: '' }
     })
+    api.installSkill(raw)
   }, [setState])
 
   // ---- ticket modal ----
@@ -484,6 +542,7 @@ export function useOrchestraStore() {
         { type: 'message', phase: 'plan', actor: agentIds[0], time: 'gerade eben', action: 'legte das Ticket an', text: 'Ticket angelegt. Ich starte mit der Planung — beantworte die Fragen im Terminal, dann geht es „Ready for Dev".' },
       ],
     }
+    api.createTicket(stateRef.current.currentProjectId, ticket, seq)
     setState((s) => ({ projects: s.projects.map((p) => (p.id === s.currentProjectId ? { ...p, tickets: [ticket, ...p.tickets] } : p)), ticketSeq: seq, ticketModalOpen: false, view: 'ticket', activeTicket: id, activePhase: 'plan', composerText: '', termInput: '' }))
   }, [curProj, setState])
 
@@ -509,14 +568,12 @@ export function useOrchestraStore() {
     const tk = proj.tickets.find((t) => t.id === id)
     if (!tk) return
     const script = planScript(tk)
-    const answered = (s0.planAnswers[id] || []).length
+    const answered = tk.activity.filter((s) => s.planAnswer).length
     const cur = script[answered]
     if (!cur) return
-    setState((s) => {
-      const list = s.planAnswers[id] ? [...s.planAnswers[id]] : []
-      list.push({ skill: cur.skill, q: cur.q, a: txt, time: 'gerade eben' })
-      return { planAnswers: { ...s.planAnswers, [id]: list }, termInput: '' }
-    })
+    const step: ActivityStep = { type: 'user', phase: 'plan', planAnswer: true, skillName: cur.skill, q: cur.q, a: txt, time: 'gerade eben', action: 'beantwortete ' + cur.skill, text: '„' + cur.q + '"  —  ' + txt }
+    setState((s) => ({ projects: mapTicketAcross(s.projects, id, (t) => ({ ...t, activity: [...t.activity, step] })), termInput: '' }))
+    api.planAnswer(id, cur.skill, cur.q, txt)
   }, [curProj, setState])
   const onTermKey = useCallback((e: any) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -533,6 +590,7 @@ export function useOrchestraStore() {
   const setTicketStatus = useCallback((id: string, status: string, e?: any) => {
     if (e) { e.stopPropagation(); e.preventDefault() }
     setState((s) => ({ menuTicket: null, statusMenuOpen: false, projects: s.projects.map((p) => (p.id !== s.currentProjectId ? p : { ...p, tickets: p.tickets.map((t) => (t.id === id ? { ...t, status: status as any, updated: 'gerade eben' } : t)) })) }))
+    api.setTicketStatus(id, status)
   }, [setState])
 
   const onDragStart = useCallback((id: string, e?: any) => {
@@ -552,10 +610,45 @@ export function useOrchestraStore() {
     const id = stateRef.current.draggedTicket
     if (id) {
       setState((s) => ({ draggedTicket: null, dragOverKey: null, projects: s.projects.map((p) => (p.id !== s.currentProjectId ? p : { ...p, tickets: p.tickets.map((t) => (t.id === id ? { ...t, status: status as any, updated: 'gerade eben' } : t)) })) }))
+      api.setTicketStatus(id, status)
     } else {
       setState({ dragOverKey: null })
     }
   }, [setState])
+
+  // ---- live agent runs (SSE) ----
+  const openStream = useCallback((id: string) => {
+    if (streamsRef.current.has(id)) return
+    const es = api.stream(id)
+    streamsRef.current.set(id, es)
+    es.addEventListener('step', (ev: MessageEvent) => {
+      try {
+        const step = JSON.parse(ev.data) as ActivityStep
+        setState((s) => ({ projects: mapTicketAcross(s.projects, id, (t) => ({ ...t, activity: [...t.activity, step] })) }))
+      } catch { /* ignore malformed */ }
+    })
+    es.addEventListener('status', (ev: MessageEvent) => {
+      try {
+        const d = JSON.parse(ev.data) as { running?: boolean }
+        setState((s) => ({ projects: mapTicketAcross(s.projects, id, (t) => ({ ...t, running: !!d.running, status: d.running && t.status !== 'backlog' && t.status !== 'ready' ? ('in_progress' as any) : t.status, updated: 'gerade eben' })) }))
+      } catch { /* ignore */ }
+    })
+    const close = () => { es.close(); streamsRef.current.delete(id) }
+    es.addEventListener('done', close)
+  }, [setState])
+
+  const runTicket = useCallback((id: string) => {
+    openStream(id)
+    api.runTicket(id).then((r) => {
+      if (!r.ok) {
+        let status = 'in_progress'
+        for (const p of stateRef.current.projects) { const t = p.tickets.find((x) => x.id === id); if (t) { status = t.status; break } }
+        const step: ActivityStep = { type: 'error', phase: phaseForStatusLocal(status), time: 'gerade eben', text: r.message || 'Agent konnte nicht gestartet werden.' }
+        setState((s) => ({ projects: mapTicketAcross(s.projects, id, (t) => ({ ...t, activity: [...t.activity, step], running: false })) }))
+        const es = streamsRef.current.get(id); if (es) { es.close(); streamsRef.current.delete(id) }
+      }
+    }).catch(() => {})
+  }, [openStream, setState])
 
   const setComposer = useCallback((e: any) => setState({ composerText: e.target.value }), [setState])
   const addComment = useCallback(() => {
@@ -563,20 +656,18 @@ export function useOrchestraStore() {
     const txt = s0.composerText.trim()
     if (!txt) return
     const id = s0.activeTicket!
-    setState((s) => {
-      const list = s.threadExtra[id] ? [...s.threadExtra[id]] : []
-      list.push({ type: 'user', time: 'gerade eben', action: 'kommentierte', text: txt })
-      return { threadExtra: { ...s.threadExtra, [id]: list }, composerText: '' }
-    })
+    const step: ActivityStep = { type: 'user', time: 'gerade eben', action: 'kommentierte', text: txt }
+    setState((s) => ({ projects: mapTicketAcross(s.projects, id, (t) => ({ ...t, activity: [...t.activity, step] })), composerText: '' }))
+    api.comment(id, txt)
   }, [setState])
   const restartAgent = useCallback(() => {
     const id = stateRef.current.activeTicket!
-    setState((s) => {
-      const list = s.threadExtra[id] ? [...s.threadExtra[id]] : []
-      list.push({ type: 'user', time: 'gerade eben', action: 'startete den Agenten neu', text: 'Neustart angefordert.' })
-      return { threadExtra: { ...s.threadExtra, [id]: list }, projects: s.projects.map((p) => (p.id !== s.currentProjectId ? p : { ...p, tickets: p.tickets.map((t) => (t.id === id ? { ...t, status: 'in_progress' as const } : t)) })) }
-    })
-  }, [setState])
+    const step: ActivityStep = { type: 'user', time: 'gerade eben', action: 'startete den Agenten neu', text: 'Neustart angefordert.' }
+    setState((s) => ({ projects: mapTicketAcross(s.projects, id, (t) => ({ ...t, activity: [...t.activity, step], status: 'in_progress' as any })) }))
+    api.comment(id, 'Neustart angefordert.')
+    api.setTicketStatus(id, 'in_progress')
+    runTicket(id)
+  }, [setState, runTicket])
 
   const actions = useMemo(
     () => ({
@@ -595,7 +686,7 @@ export function useOrchestraStore() {
       openTicket, setPhase, setTermInput, submitTerm, onTermKey,
       toggleCardMenu, toggleStatusMenu, setTicketStatus,
       onDragStart, onDragEnd, onColOver, onColDrop,
-      setComposer, addComment, restartAgent,
+      setComposer, addComment, restartAgent, runTicket,
     }),
     // Every callback is stable (useCallback), so this memo effectively never changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps

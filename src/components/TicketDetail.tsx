@@ -72,6 +72,20 @@ export function TicketDetail({ v }: { v: Vals }) {
                 <H as="button" onClick={v.restartAgent} hover="filter:brightness(1.08)" css="flex:none;font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;background:var(--err);color:#fff;transition:filter .12s;">Neu starten</H>
               </div>
             )}
+            {!t.working && !t.blocked && (
+              <div style={sx('display:flex;align-items:center;gap:12px;margin-top:16px;')}>
+                <H as="button" onClick={() => v.runTicket(t.id)} hover="filter:brightness(1.08)" css={`display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;background:var(--accent);color:var(--accent-text);transition:filter .12s;opacity:${t.running ? '0.7' : '1'};`}>
+                  {t.running ? (
+                    <><span style={sx('width:8px;height:8px;border-radius:50%;background:var(--accent-text);animation:pulse 1.4s infinite;')}></span>Agent läuft…</>
+                  ) : (
+                    <><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>Agent starten</>
+                  )}
+                </H>
+                {!v.agentsConfigured && (
+                  <span style={sx('font-size:12px;color:var(--text-3);')}>Setze <b style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-2);font-weight:600;")}>ANTHROPIC_API_KEY</b> in <b style={sx("font-family:'JetBrains Mono',monospace;color:var(--text-2);font-weight:600;")}>server/.env</b> für echte Läufe.</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* activity thread */}

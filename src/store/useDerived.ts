@@ -229,7 +229,6 @@ export function useDerived() {
         const primary = team[0] || ({ name: '?', provider: 'claude-sonnet-4.5' } as any)
         const pv = provById(primary.provider)
         const ps = provStyle(pv.kind)
-        const extra = (st.threadExtra[t.id] || []).length
         const moveOptions = STATUS_LIST.map(([sv, sl]) => {
           const m = ticketStatus(sv)
           return { label: sl, dot: m.dot, active: sv === t.status, onPick: (e: any) => a.setTicketStatus(t.id, sv, e) }
@@ -246,7 +245,7 @@ export function useDerived() {
           provBg: ps.bg,
           provColor: ps.color,
           blocked: t.status === 'blocked',
-          activityCount: String(t.activity.length + extra),
+          activityCount: String(t.activity.length),
           cardBorder: t.status === 'blocked' ? 'var(--err)' : 'var(--border)',
           onOpen: () => a.openTicket(t.id),
           onMenu: (e: any) => a.toggleCardMenu(t.id, e),
@@ -283,10 +282,9 @@ export function useDerived() {
     const sMeta = ticketStatus(tk.status)
     const pv = provById(ag.provider)
     const ps = provStyle(pv.kind)
-    const extra = st.threadExtra[tk.id] || []
-    const planAns = st.planAnswers[tk.id] || []
-    const planAnsComments = planAns.map((pa) => ({ type: 'user' as const, phase: 'plan' as const, time: pa.time, action: 'beantwortete ' + pa.skill, text: '„' + pa.q + '"  —  ' + pa.a }))
-    const merged = [...tk.activity, ...planAnsComments, ...extra]
+    // Activity (agent steps + user comments + plan answers) is the canonical
+    // thread, persisted by the backend.
+    const merged = tk.activity
     const activity = merged.map((s: any, i: number) => {
       const isLast = i === merged.length - 1
       const streaming = tk.status === 'in_progress' && isLast && s.type === 'message'
@@ -373,10 +371,11 @@ export function useDerived() {
       }
     })
     const activePhaseObj = phases.find((p) => p.key === activePhaseKey) || { steps: [], hint: '', label: '' }
-    // planning terminal
+    // planning terminal (answered questions come from the activity thread)
+    const planAns = tk.activity.filter((s: any) => s.planAnswer)
     const script = planScript(tk)
     const answered = planAns.length
-    const termLines = script.slice(0, answered).map((qq, i) => ({ skill: qq.skill, q: qq.q, a: planAns[i].a }))
+    const termLines = script.slice(0, answered).map((qq, i) => ({ skill: qq.skill, q: qq.q, a: planAns[i]?.a || '' }))
     const termCurrent = script[answered] || null
     const terminal = { lines: termLines, hasCurrent: !!termCurrent, curSkill: termCurrent ? termCurrent.skill : '', curQ: termCurrent ? termCurrent.q : '', done: !termCurrent, total: String(script.length), answered: String(answered) }
     // Umsetzungsplan
@@ -457,6 +456,7 @@ export function useDerived() {
       planItems,
       hasPlan: planItems.length > 0,
       stages,
+      running: !!tk.running,
     }
   }
 
@@ -569,6 +569,8 @@ export function useDerived() {
     setComposer: a.setComposer,
     addComment: a.addComment,
     restartAgent: a.restartAgent,
+    runTicket: a.runTicket,
+    agentsConfigured: st.agentsConfigured,
     termInput: st.termInput,
     setTermInput: a.setTermInput,
     submitTerm: a.submitTerm,

@@ -55,6 +55,11 @@ export interface ActivityStep {
   to?: string
   code?: CodeAttachment
   shot?: ShotAttachment
+  // plan-answer steps (from the planning terminal) carry the raw Q/A so the
+  // terminal can re-render answered questions after a reload.
+  planAnswer?: boolean
+  a?: string
+  q?: string
 }
 
 export interface PlanQuestion {
@@ -78,6 +83,7 @@ export interface Ticket {
   planQuestions?: PlanQuestion[]
   plan?: string[]
   fromJira?: boolean
+  running?: boolean
 }
 
 export interface FlowNode {
@@ -215,4 +221,6 @@ export interface OrchestraState {
   newAgent: NewAgentDraft
   skills: Skill[]
   projects: Project[]
+  agentsConfigured: boolean
+  hydrated: boolean
 }
