@@ -223,4 +223,6 @@ export interface OrchestraState {
   projects: Project[]
   agentsConfigured: boolean
   hydrated: boolean
+  user: { id: string; email: string; name: string } | null
+  authChecked: boolean
 }

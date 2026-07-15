@@ -100,11 +100,14 @@ export function Sidebar({ v }: { v: Vals }) {
           Einstellungen
         </H>
         <div style={sx('display:flex;align-items:center;gap:10px;padding:8px 6px;border-top:1px solid var(--border);margin-top:2px;')}>
-          <div style={sx('width:30px;height:30px;border-radius:8px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none;')}>LM</div>
+          <div style={sx('width:30px;height:30px;border-radius:8px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none;')}>{(v.user?.name || v.user?.email || '?').slice(0, 2).toUpperCase()}</div>
           <div style={sx('flex:1;min-width:0;line-height:1.2;')}>
-            <div style={sx('font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')}>Lena Mayer</div>
-            <div style={sx('font-size:11px;color:var(--text-3);')}>Workspace: Nova</div>
+            <div style={sx('font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')}>{v.user?.name || 'Nutzer'}</div>
+            <div style={sx('font-size:11px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')}>{v.user?.email}</div>
           </div>
+          <H as="button" onClick={v.logout} title="Abmelden" hover="background:var(--surface-2);color:var(--text)" css="width:28px;height:28px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-3);transition:.12s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M15 4h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-3M10 17l-5-5 5-5M4 12h11" /></svg>
+          </H>
         </div>
       </div>
     </aside>

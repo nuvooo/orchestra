@@ -32,10 +32,14 @@ npm install
 npm run dev                   # http://localhost:5173  (Vite proxies /api → :8787)
 ```
 
-Open http://localhost:5173. Without an `ANTHROPIC_API_KEY` the app is fully usable as a
-persistent tool — only real agent **runs** are gated (the ticket shows a clear hint).
-With a key set in `server/.env`, click **„Agent starten"** on a ticket and watch the
-agent reason, call skills, and stream results into the thread.
+Open http://localhost:5173. You'll land on a **login screen** — register a new account
+(you get your own workspace, seeded with example projects) or click **„Als Demo-Nutzer
+ansehen"** (`demo@orchestra.local` / `demo1234`). Each user's data is fully isolated.
+
+Without an `ANTHROPIC_API_KEY` the app is fully usable as a persistent tool — only real
+agent **runs** are gated (the ticket shows a clear hint). With a key set in `server/.env`,
+click **„Agent starten"** on a ticket and watch the agent reason, call skills, and stream
+results into the thread.
 
 ### Configuration (`server/.env`)
 
@@ -87,6 +91,9 @@ happens, so it survives reloads.
 
 ### API (selected)
 
+Auth: `POST /api/auth/register` · `POST /api/auth/login` · `POST /api/auth/logout` ·
+`GET /api/auth/me`. All `/api/*` data routes require a session and are scoped to the user.
+
 `GET /api/state` · `POST /api/projects` · `PATCH /api/projects/:id` ·
 `POST /api/projects/:id/agents` · `POST /api/projects/:id/tickets` · `PATCH /api/tickets/:id` ·
 `POST /api/tickets/:id/comment` · `POST /api/tickets/:id/plan-answer` ·
@@ -112,7 +119,11 @@ This is a phased build toward the full product:
   as needed in `server/src/agent/runner.ts`.
 - **Phase 3 — Jira/Slack.** ✅ Real clients in place (`server/src/integrations.ts`), gated by
   credentials.
-- **Phase 4 — Auth / multi-user + deployment.** ⏭ Next: sessions/accounts, Postgres (the
-  repository is Postgres-portable), hosting, CI.
+- **Phase 4a — Auth + Multi-User.** ✅ Done. Email+password accounts with cookie sessions
+  (`server/src/db.ts`, `server/src/index.ts`); every user gets an isolated, seeded workspace
+  (data scoped by `owner_id` with composite primary keys). A `demo@orchestra.local` account
+  is created on first boot.
+- **Phase 4b — Deployment.** ⏭ Next: Postgres (the repository is Postgres-portable), hosting,
+  CI. Not started yet.
 
 Ported from a Claude Design HTML/CSS/JS prototype; the frontend matches it pixel-for-pixel.

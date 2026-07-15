@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { PROVIDERS, WF_ROLES, seedSkills, seedProjects, initialWizardData } from './seed'
 import { planScript } from '../lib/plan'
 import { api } from './api'
+import type { AuthUser } from './api'
 import type {
   OrchestraState,
   Project,
@@ -81,6 +82,8 @@ function makeInitialState(): OrchestraState {
     projects: seedProjects.map((p) => ({ ...p })),
     agentsConfigured: false,
     hydrated: false,
+    user: null,
+    authChecked: false,
   }
 }
 
@@ -103,6 +106,39 @@ export function useOrchestraStore() {
     },
     [],
   )
+
+  // ---- hydration + auth ----
+  const hydrate = useCallback(() => {
+    return api
+      .getState()
+      .then((data) => {
+        const projects = data.projects.map((p) => (p.flows ? p : { ...p, flows: buildDefaultFlows(p) }))
+        setState((s) => {
+          const stillValid = projects.some((p) => p.id === s.currentProjectId)
+          const cur = stillValid ? s.currentProjectId : projects[0]?.id || s.currentProjectId
+          return { projects, skills: data.skills, ticketSeq: data.ticketSeq, agentsConfigured: data.agentsConfigured, hydrated: true, currentProjectId: cur }
+        })
+      })
+      .catch(() => setState({ hydrated: true }))
+  }, [setState])
+
+  const login = useCallback(async (email: string, password: string): Promise<{ ok: boolean; message?: string }> => {
+    const r = await api.login(email, password)
+    if (r.ok && r.user) { setState({ user: r.user, authChecked: true }); await hydrate() }
+    return { ok: r.ok, message: r.message }
+  }, [setState, hydrate])
+
+  const register = useCallback(async (email: string, name: string, password: string): Promise<{ ok: boolean; message?: string }> => {
+    const r = await api.register(email, name, password)
+    if (r.ok && r.user) { setState({ user: r.user, authChecked: true }); await hydrate() }
+    return { ok: r.ok, message: r.message }
+  }, [setState, hydrate])
+
+  const logout = useCallback(async () => {
+    await api.logout().catch(() => {})
+    // reset to a clean, logged-out state
+    setState({ ...makeInitialState(), authChecked: true, user: null })
+  }, [setState])
 
   // ---- theme ----
   const mqRef = useRef<MediaQueryList | null>(null)
@@ -171,26 +207,14 @@ export function useOrchestraStore() {
     // seed default flows for projects that have none
     setState((s) => ({ projects: s.projects.map((p) => (p.flows ? p : { ...p, flows: buildDefaultFlows(p) })) }))
 
-    // Hydrate from the backend (system of record). Falls back to the seed if
-    // the server isn't reachable so the app still works standalone.
+    // Check the session; hydrate the user's workspace if logged in.
     api
-      .getState()
-      .then((data) => {
-        const projects = data.projects.map((p) => (p.flows ? p : { ...p, flows: buildDefaultFlows(p) }))
-        setState((s) => {
-          const stillValid = projects.some((p) => p.id === s.currentProjectId)
-          const cur = stillValid ? s.currentProjectId : projects[0]?.id || s.currentProjectId
-          return {
-            projects,
-            skills: data.skills,
-            ticketSeq: data.ticketSeq,
-            agentsConfigured: data.agentsConfigured,
-            hydrated: true,
-            currentProjectId: cur,
-          }
-        })
+      .me()
+      .then(({ user, agentsConfigured }) => {
+        setState({ user, authChecked: true, agentsConfigured })
+        if (user) hydrate()
       })
-      .catch(() => setState({ hydrated: true }))
+      .catch(() => setState({ authChecked: true }))
 
     return () => {
       mq.removeEventListener('change', onMq)
@@ -687,6 +711,7 @@ export function useOrchestraStore() {
       toggleCardMenu, toggleStatusMenu, setTicketStatus,
       onDragStart, onDragEnd, onColOver, onColDrop,
       setComposer, addComment, restartAgent, runTicket,
+      login, register, logout,
     }),
     // Every callback is stable (useCallback), so this memo effectively never changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps

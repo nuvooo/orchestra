@@ -69,35 +69,36 @@ interface RunResult { ok: boolean; message: string }
 
 const running = new Set<string>()
 
-export async function runAgent(ticketId: string): Promise<RunResult> {
+export async function runAgent(ownerId: string, ticketId: string): Promise<RunResult> {
+  const chan = ownerId + ':' + ticketId
   const client = clientOrNull()
   if (!client) return { ok: false, message: 'ANTHROPIC_API_KEY nicht gesetzt — Agenten sind nicht konfiguriert. Trage den Key in server/.env ein, um echte Läufe zu aktivieren.' }
-  if (running.has(ticketId)) return { ok: false, message: 'Läuft bereits.' }
+  if (running.has(chan)) return { ok: false, message: 'Läuft bereits.' }
 
-  const t = dbmod.getTicket(ticketId)
+  const t = dbmod.getTicket(ownerId, ticketId)
   if (!t) return { ok: false, message: 'Ticket nicht gefunden.' }
-  const project = dbmod.getProject(t.projectId)
+  const project = dbmod.getProject(ownerId, t.projectId)
   if (!project) return { ok: false, message: 'Projekt nicht gefunden.' }
 
   const team = ticketTeam(t).map((id) => project.agents.find((a) => a.id === id)).filter(Boolean) as Agent[]
   const actor = team[0]
   if (!actor) return { ok: false, message: 'Dem Ticket ist kein Agent zugewiesen.' }
 
-  running.add(ticketId)
+  running.add(chan)
   const phase = phaseForStatus(t.status)
-  const installed = new Set(dbmod.getState().skills.filter((s) => s.installed).map((s) => s.name))
+  const installed = new Set(dbmod.getState(ownerId).skills.filter((s) => s.installed).map((s) => s.name))
   const skills = (actor.skills || []).filter((s) => installed.has(s))
   const tools = skills.map(toolFor)
   const toolNameToSkill = new Map(skills.map((s) => [s.replace(/-/g, '_'), s]))
 
   // mark running
-  dbmod.saveTicket({ ...t, running: true, status: t.status === 'backlog' || t.status === 'ready' ? t.status : 'in_progress', updated: nowLabel() })
-  broadcast(ticketId, 'status', { running: true })
+  dbmod.saveTicket(ownerId, { ...t, running: true, status: t.status === 'backlog' || t.status === 'ready' ? t.status : 'in_progress', updated: nowLabel() })
+  broadcast(chan, 'status', { running: true })
 
   const started = Date.now()
   const append = (step: ActivityStep) => {
-    const updated = dbmod.appendActivity(ticketId, step)
-    broadcast(ticketId, 'step', step)
+    const updated = dbmod.appendActivity(ownerId, ticketId, step)
+    broadcast(chan, 'step', step)
     return updated
   }
 
@@ -144,18 +145,18 @@ export async function runAgent(ticketId: string): Promise<RunResult> {
     }
   } catch (e: any) {
     append({ type: 'error', actor: actor.id, phase, time: hhmm(), text: 'Lauf abgebrochen: ' + (e?.message || String(e)) })
-    dbmod.saveTicket({ ...dbmod.getTicket(ticketId)!, running: false })
-    running.delete(ticketId)
-    broadcast(ticketId, 'status', { running: false })
+    dbmod.saveTicket(ownerId, { ...dbmod.getTicket(ownerId, ticketId)!, running: false })
+    running.delete(chan)
+    broadcast(chan, 'status', { running: false })
     return { ok: false, message: e?.message || 'Fehler beim Agentenlauf.' }
   }
 
   const secs = Math.round((Date.now() - started) / 1000)
-  const finalT = dbmod.getTicket(ticketId)!
-  dbmod.saveTicket({ ...finalT, running: false, updated: nowLabel(), elapsed: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, tokens: totalOut >= 1000 ? (totalOut / 1000).toFixed(1) + 'k' : String(totalOut) })
-  running.delete(ticketId)
-  broadcast(ticketId, 'status', { running: false })
-  broadcast(ticketId, 'done', {})
+  const finalT = dbmod.getTicket(ownerId, ticketId)!
+  dbmod.saveTicket(ownerId, { ...finalT, running: false, updated: nowLabel(), elapsed: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, tokens: totalOut >= 1000 ? (totalOut / 1000).toFixed(1) + 'k' : String(totalOut) })
+  running.delete(chan)
+  broadcast(chan, 'status', { running: false })
+  broadcast(chan, 'done', {})
   return { ok: true, message: 'Lauf abgeschlossen.' }
 }
 

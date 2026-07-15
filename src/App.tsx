@@ -12,9 +12,21 @@ import { ProjectConfig } from './components/ProjectConfig'
 import { ProjectWizard } from './components/modals/ProjectWizard'
 import { TicketModal } from './components/modals/TicketModal'
 import { AgentSlideOver } from './components/modals/AgentSlideOver'
+import { AuthScreen } from './components/AuthScreen'
 
 export default function App() {
   const v = useDerived()
+
+  // Auth gate: wait for the session check, then show login or the app.
+  if (!v.authChecked) {
+    return (
+      <div style={sx("min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--text-3);font-family:'Instrument Sans',system-ui,sans-serif;font-size:14px;")}>
+        Lädt…
+      </div>
+    )
+  }
+  if (!v.user) return <AuthScreen v={v} />
+
   return (
     <div style={sx("display:flex;min-height:100vh;background:var(--bg);color:var(--text);font-family:'Instrument Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;")}>
       <Sidebar v={v} />
