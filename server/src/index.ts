@@ -130,15 +130,6 @@ app.patch<{ Params: { name: string } }>('/api/skills/:name', async (req) => {
   db.setSkillInstalled(uid(req), req.params.name, installed)
   return db.getSkill(uid(req), req.params.name)
 })
-app.post('/api/skills/install', async (req) => {
-  const { name } = req.body as { name: string }
-  const clean = name.replace(/^https?:\/\//, '').replace(/^skills\.sh\//, '').replace(/\s+/g, '-').toLowerCase()
-  const ex = db.getSkill(uid(req), clean)
-  if (ex) { db.setSkillInstalled(uid(req), clean, true); return { skill: db.getSkill(uid(req), clean), created: false } }
-  db.addSkill(uid(req), { name: clean, cat: 'Eigene', desc: 'Selbst installiert aus der skills.sh Registry.', installs: 'neu', installed: true })
-  return { skill: db.getSkill(uid(req), clean), created: true }
-})
-
 // ---- integrations ----
 app.get<{ Params: { id: string } }>('/api/projects/:id/jira-issues', async (req, reply) => {
   const p = db.getProject(uid(req), req.params.id)
@@ -167,5 +158,5 @@ if (existsSync(WEB_DIR)) {
 
 const PORT = parseInt(process.env.PORT || '8787', 10)
 app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {
-  console.log(`Orchestra API on http://localhost:${PORT}  (agents ${agentsConfigured() ? 'ON' : 'OFF — set ANTHROPIC_API_KEY'})  · demo login demo@orchestra.local / demo1234`)
+  console.log(`Orchestra API on http://localhost:${PORT}  (agents ${agentsConfigured() ? 'ON' : 'OFF — set ANTHROPIC_API_KEY'})`)
 })

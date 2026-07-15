@@ -22,47 +22,41 @@ function nowLabel(): string {
   return 'gerade eben'
 }
 
-// Each installed skill the acting agent owns becomes a client tool. The tool's
-// side effect is illustrative (the model's reasoning is the real work); a real
-// deployment would wire these to actual integrations.
+// Each installed skill the acting agent owns becomes a client tool.
+//
+// Only reasoning skills exist today: they have no external side effect, so the
+// tool result is a directive that hands the work back to the model rather than
+// a report from some system. Any skill that would need a real integration (a
+// search index, a mailer, a database) must not be added here until that
+// integration exists — a tool that reports success it never performed poisons
+// every conclusion the agent draws from it.
+const SKILL_TOOLS: Record<string, { schema: Anthropic.Tool.InputSchema; run: (input: any) => string }> = {
+  brainstorm: {
+    schema: { type: 'object', properties: { topic: { type: 'string', description: 'Fragestellung, zu der Ansätze gesucht werden' } }, required: ['topic'] },
+    run: (input) =>
+      `Erarbeite jetzt selbst mehrere unterschiedliche Lösungsansätze zu „${input.topic}". ` +
+      `Nenne pro Ansatz den Kerngedanken, einen Vorteil und einen Nachteil. Erfinde keine Quellen oder Messwerte.`,
+  },
+  grillme: {
+    schema: { type: 'object', properties: { assumptions: { type: 'string', description: 'Zu prüfende Annahmen' } }, required: ['assumptions'] },
+    run: (input) =>
+      `Hinterfrage jetzt selbst kritisch: ${input.assumptions}. ` +
+      `Benenne die riskanteste Annahme, was passiert wenn sie falsch ist, und woran man das früh erkennen würde. Erfinde keine Fakten.`,
+  },
+}
+
 function toolFor(skill: string): Anthropic.Tool {
-  const schemas: Record<string, Anthropic.Tool.InputSchema> = {
-    'web-search': { type: 'object', properties: { query: { type: 'string', description: 'Suchanfrage' } }, required: ['query'] },
-    'brainstorm': { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] },
-    'grillme': { type: 'object', properties: { assumptions: { type: 'string', description: 'Zu prüfende Annahmen' } }, required: ['assumptions'] },
-    'summarize': { type: 'object', properties: { source: { type: 'string' } }, required: ['source'] },
-    'code-review': { type: 'object', properties: { scope: { type: 'string' } }, required: ['scope'] },
-    'pdf-extract': { type: 'object', properties: { file: { type: 'string' } }, required: ['file'] },
-    'sql-query': { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] },
-    'send-email': { type: 'object', properties: { to: { type: 'string' }, subject: { type: 'string' } }, required: ['to'] },
-    'slack-post': { type: 'object', properties: { channel: { type: 'string' }, text: { type: 'string' } }, required: ['channel', 'text'] },
-    'image-gen': { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] },
-    'csv-transform': { type: 'object', properties: { file: { type: 'string' } }, required: ['file'] },
-  }
   return {
     name: skill.replace(/-/g, '_'),
     description: `Skill „${skill}" ausführen.`,
-    input_schema: schemas[skill] || { type: 'object', properties: { input: { type: 'string' } } },
+    input_schema: SKILL_TOOLS[skill]?.schema || { type: 'object', properties: { input: { type: 'string' } } },
   }
 }
 
 function runSkill(skill: string, input: any): string {
-  // Illustrative skill execution. Returns a short, plausible result the agent
-  // can reason about. Replace with real integrations per skill as needed.
-  switch (skill) {
-    case 'web-search': return `4 relevante Primärquellen zu „${input.query}" gefunden.`
-    case 'brainstorm': return `5 Lösungsansätze zu „${input.topic}" gesammelt.`
-    case 'grillme': return `Annahmen kritisch geprüft: ${input.assumptions}.`
-    case 'summarize': return `Kernpunkte aus „${input.source}" verdichtet.`
-    case 'code-review': return `Diff analysiert (${input.scope || 'scope'}) · 2 Findings mittlerer Schwere.`
-    case 'pdf-extract': return `Tabellen und Kennzahlen aus „${input.file}" extrahiert.`
-    case 'sql-query': return `Read-only Abfrage auf „${input.table}" ausgeführt.`
-    case 'send-email': return `E-Mail an ${input.to} vorbereitet (Rückfrage vor Versand).`
-    case 'slack-post': return `Nachricht für ${input.channel} formuliert.`
-    case 'image-gen': return `UI-Variante erzeugt: ${input.prompt}.`
-    case 'csv-transform': return `CSV „${input.file}" geparst und umgeformt.`
-    default: return 'Skill ausgeführt.'
-  }
+  const impl = SKILL_TOOLS[skill]
+  if (!impl) return `Skill „${skill}" ist nicht implementiert und wurde nicht ausgeführt. Arbeite ohne ihn weiter.`
+  return impl.run(input)
 }
 
 interface RunResult { ok: boolean; message: string }

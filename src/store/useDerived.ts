@@ -12,6 +12,18 @@ import {
 } from '../lib/styleHelpers'
 import type { Project, Ticket, Agent, Phase } from './types'
 
+// A fresh workspace has no project yet, but every view model below is computed
+// unconditionally. This blank shell keeps them harmless (empty lists, zero
+// counts) until the user creates one; App renders an empty state instead of the
+// board while `hasProjects` is false.
+const BLANK_PROJECT: Project = {
+  id: '', name: '', hue: 250,
+  jira: { connected: false, url: '' },
+  slack: { connected: false, channel: '' },
+  designMd: '', instructions: '',
+  envs: [], jiraInbox: [], roles: [], agents: [], tickets: [],
+}
+
 /**
  * Faithful port of the prototype's `renderVals()` — builds every view model the
  * templates consume from the current state + bound action handlers.
@@ -21,14 +33,14 @@ export function useDerived() {
   const st = state
   const a = actions
   const dark = st.theme === 'dark'
-  const proj = a.curProj()
+  const proj = a.curProj() ?? BLANK_PROJECT
   const av = (h: number | null) => avatar(st.theme, h)
   const ticketTeam = a.ticketTeam
 
   const projIcon = (p: Project) => ({
     iconBg: `oklch(${dark ? 0.34 : 0.93} 0.07 ${p.hue})`,
     iconColor: `oklch(${dark ? 0.86 : 0.44} 0.15 ${p.hue})`,
-    initial: p.name[0].toUpperCase(),
+    initial: p.name[0]?.toUpperCase() ?? '·',
   })
   const curProject = { name: proj.name, ...projIcon(proj) }
 
@@ -541,6 +553,7 @@ export function useDerived() {
     pageTitle,
     hasBlocked: blockedCount > 0,
     blockedCount: String(blockedCount),
+    hasProjects: st.projects.length > 0,
     isDashboard: st.view === 'dashboard',
     isTickets: st.view === 'tickets',
     isTicket: st.view === 'ticket',
@@ -580,9 +593,6 @@ export function useDerived() {
     setTermInput: a.setTermInput,
     submitTerm: a.submitTerm,
     onTermKey: a.onTermKey,
-    skillInput: st.skillInput,
-    setSkillInput: a.setSkillInput,
-    installSkill: a.installSkill,
     ticketModalOpen: st.ticketModalOpen,
     closeTicketModal: a.closeTicketModal,
     submitTicket: a.submitTicket,

@@ -1,8 +1,7 @@
-import type { Provider, Skill, Project } from './types'
-import seedData from '../../shared/seed.json'
+import type { Provider } from './types'
 
-// Seed data lives in shared/seed.json so the frontend and the backend
-// (server/) hydrate from a single source of truth.
+// Static option lists for the UI. Everything user-owned (projects, agents,
+// tickets, skills) is loaded from the server — the frontend starts empty.
 
 export const PROVIDERS: Provider[] = [
   { id: 'claude-sonnet-4.5', label: 'claude-sonnet-4.5', kind: 'cloud' },
@@ -16,9 +15,6 @@ export const PROVIDERS: Provider[] = [
 ]
 
 export const WF_ROLES = ['Lead', 'Planung', 'Design', 'Code', 'Review', 'QA', 'Sonstige']
-
-export const seedSkills: Skill[] = (seedData as { skills: Skill[] }).skills
-export const seedProjects: Project[] = (seedData as { projects: Project[] }).projects
 
 export const initialWizardData = () => ({
   name: '',

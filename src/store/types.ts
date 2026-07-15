@@ -10,7 +10,6 @@ export interface Skill {
   name: string
   cat: string
   desc: string
-  installs: string
   installed: boolean
 }
 
@@ -217,7 +216,6 @@ export interface OrchestraState {
   ticketModalOpen: boolean
   newTicket: NewTicketDraft
   ticketSeq: number
-  skillInput: string
   newAgent: NewAgentDraft
   skills: Skill[]
   projects: Project[]

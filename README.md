@@ -32,9 +32,8 @@ npm install
 npm run dev                   # http://localhost:5173  (Vite proxies /api → :8787)
 ```
 
-Open http://localhost:5173. You'll land on a **login screen** — register a new account
-(you get your own workspace, seeded with example projects) or click **„Als Demo-Nutzer
-ansehen"** (`demo@orchestra.local` / `demo1234`). Each user's data is fully isolated.
+Open http://localhost:5173. You'll land on a **login screen** — register an account to get
+your own empty workspace, then create your first project. Each user's data is fully isolated.
 
 Without an `ANTHROPIC_API_KEY` the app is fully usable as a persistent tool — only real
 agent **runs** are gated (the ticket shows a clear hint). With a key set in `server/.env`,
@@ -124,7 +123,7 @@ docker compose up --build        # http://localhost:8787
   `better-sqlite3` server deps, then a slim runtime that runs the API and serves `dist/`.
 - SQLite lives on the **`./data` volume** (`DATABASE_FILE=/data/orchestra.db`), so your
   data survives container rebuilds. No external database required.
-- Log in with the demo account (`demo@orchestra.local` / `demo1234`) or register.
+- Register an account on first visit; each user gets an isolated workspace.
 
 To run the same single-unit setup without Docker:
 
@@ -147,15 +146,15 @@ This is a phased build toward the full product:
 - **Phase 1 — Backend + DB + persistence.** ✅ Done. Everything you do persists in SQLite;
   the frontend hydrates from the API.
 - **Phase 2 — Real KI agents.** ✅ Done. Agents run tickets via the Claude API with tool
-  use; activity streams live over SSE and is persisted. Skill *side effects* are currently
-  illustrative (the model's reasoning is real) — wire individual skills to real integrations
-  as needed in `server/src/agent/runner.ts`.
+  use; activity streams live over SSE and is persisted. Only reasoning skills
+  (`brainstorm`, `grillme`) ship today — they have no external side effect, so the tool
+  result hands the work back to the model. Skills needing a real integration (search,
+  mail, SQL) must be wired up in `server/src/agent/runner.ts` before being offered.
 - **Phase 3 — Jira/Slack.** ✅ Real clients in place (`server/src/integrations.ts`), gated by
   credentials.
 - **Phase 4a — Auth + Multi-User.** ✅ Done. Email+password accounts with cookie sessions
-  (`server/src/db.ts`, `server/src/index.ts`); every user gets an isolated, seeded workspace
-  (data scoped by `owner_id` with composite primary keys). A `demo@orchestra.local` account
-  is created on first boot.
+  (`server/src/db.ts`, `server/src/index.ts`); every user gets an isolated, empty workspace
+  (data scoped by `owner_id` with composite primary keys).
 - **Phase 4b — Deployment.** ✅ Done. Single-unit **Docker** image + `docker-compose.yml`
   (the API serves the built SPA), SQLite persisted on a volume, and **GitHub Actions CI**
   (frontend build, server typecheck, Docker build). SQLite stays the system of record — no

@@ -36,7 +36,7 @@ db.exec(`
     PRIMARY KEY (owner_id, id)
   );
   CREATE TABLE IF NOT EXISTS skills (
-    owner_id TEXT, name TEXT, cat TEXT, descr TEXT, installs TEXT, installed INTEGER, ord INTEGER,
+    owner_id TEXT, name TEXT, cat TEXT, descr TEXT, installed INTEGER, ord INTEGER,
     PRIMARY KEY (owner_id, name)
   );
   CREATE TABLE IF NOT EXISTS meta ( owner_id TEXT, key TEXT, value TEXT, PRIMARY KEY (owner_id, key) );
@@ -58,7 +58,7 @@ try {
       CREATE TABLE IF NOT EXISTS projects (owner_id TEXT, id TEXT, name TEXT, hue INTEGER, jira TEXT, slack TEXT, designMd TEXT, instructions TEXT, envs TEXT, jiraInbox TEXT, roles TEXT, flows TEXT, ord INTEGER, PRIMARY KEY (owner_id, id));
       CREATE TABLE IF NOT EXISTS agents (owner_id TEXT, id TEXT, project_id TEXT, name TEXT, role TEXT, wf TEXT, provider TEXT, status TEXT, skills TEXT, hue INTEGER, ord INTEGER, PRIMARY KEY (owner_id, id));
       CREATE TABLE IF NOT EXISTS tickets (owner_id TEXT, id TEXT, project_id TEXT, title TEXT, status TEXT, prio TEXT, agent_id TEXT, agent_ids TEXT, skill TEXT, elapsed TEXT, tokens TEXT, updated TEXT, descr TEXT, activity TEXT, plan_questions TEXT, plan TEXT, from_jira INTEGER, running INTEGER, ord INTEGER, PRIMARY KEY (owner_id, id));
-      CREATE TABLE IF NOT EXISTS skills (owner_id TEXT, name TEXT, cat TEXT, descr TEXT, installs TEXT, installed INTEGER, ord INTEGER, PRIMARY KEY (owner_id, name));
+      CREATE TABLE IF NOT EXISTS skills (owner_id TEXT, name TEXT, cat TEXT, descr TEXT, installed INTEGER, ord INTEGER, PRIMARY KEY (owner_id, name));
       CREATE TABLE IF NOT EXISTS meta ( owner_id TEXT, key TEXT, value TEXT, PRIMARY KEY (owner_id, key) );
     `)
   }
@@ -117,15 +117,17 @@ export function deleteSession(token: string | undefined) {
 }
 
 // ---------- seed a new user's workspace ----------
+// A new user starts with an empty workspace: no projects, no tickets. Only the
+// built-in planning skills are installed, since the plan flow depends on them.
 function seedForUser(ownerId: string) {
   const seedPath = fileURLToPath(new URL('../../shared/seed.json', import.meta.url))
   const seed = JSON.parse(readFileSync(seedPath, 'utf8')) as { projects: Project[]; skills: Skill[] }
   const tx = db.transaction(() => {
     seed.projects.forEach((p, i) => insertProjectRow(ownerId, p, i))
     seed.skills.forEach((s, i) => db.prepare(
-      'INSERT OR REPLACE INTO skills (owner_id,name,cat,descr,installs,installed,ord) VALUES (?,?,?,?,?,?,?)'
-    ).run(ownerId, s.name, s.cat, s.desc, s.installs, s.installed ? 1 : 0, i))
-    db.prepare('INSERT OR REPLACE INTO meta (owner_id,key,value) VALUES (?,?,?)').run(ownerId, 'ticketSeq', '40')
+      'INSERT OR REPLACE INTO skills (owner_id,name,cat,descr,installed,ord) VALUES (?,?,?,?,?,?)'
+    ).run(ownerId, s.name, s.cat, s.desc, s.installed ? 1 : 0, i))
+    db.prepare('INSERT OR REPLACE INTO meta (owner_id,key,value) VALUES (?,?,?)').run(ownerId, 'ticketSeq', '1')
   })
   tx()
 }
@@ -217,12 +219,12 @@ export function setSkillInstalled(ownerId: string, name: string, installed: bool
 }
 export function addSkill(ownerId: string, s: Skill) {
   const ord = (db.prepare('SELECT COALESCE(MAX(ord),-1)+1 n FROM skills WHERE owner_id=?').get(ownerId) as { n: number }).n
-  db.prepare('INSERT OR REPLACE INTO skills (owner_id,name,cat,descr,installs,installed,ord) VALUES (?,?,?,?,?,?,?)')
-    .run(ownerId, s.name, s.cat, s.desc, s.installs, s.installed ? 1 : 0, ord)
+  db.prepare('INSERT OR REPLACE INTO skills (owner_id,name,cat,descr,installed,ord) VALUES (?,?,?,?,?,?)')
+    .run(ownerId, s.name, s.cat, s.desc, s.installed ? 1 : 0, ord)
 }
 export function getSkill(ownerId: string, name: string): Skill | null {
   const r = db.prepare('SELECT * FROM skills WHERE owner_id=? AND name=?').get(ownerId, name) as any
-  return r ? { name: r.name, cat: r.cat, desc: r.descr, installs: r.installs, installed: !!r.installed } : null
+  return r ? { name: r.name, cat: r.cat, desc: r.descr, installed: !!r.installed } : null
 }
 
 export function getMeta(ownerId: string, key: string): string | null {
@@ -274,18 +276,10 @@ export function getState(ownerId: string): AppState {
   const projRows = db.prepare('SELECT id FROM projects WHERE owner_id=? ORDER BY ord').all(ownerId) as { id: string }[]
   const projects = projRows.map((r) => getProject(ownerId, r.id)!).filter(Boolean)
   const skills = (db.prepare('SELECT * FROM skills WHERE owner_id=? ORDER BY ord').all(ownerId) as any[]).map((r) => ({
-    name: r.name, cat: r.cat, desc: r.descr, installs: r.installs, installed: !!r.installed,
+    name: r.name, cat: r.cat, desc: r.descr, installed: !!r.installed,
   })) as Skill[]
-  const ticketSeq = parseInt(getMeta(ownerId, 'ticketSeq') || '40', 10)
+  const ticketSeq = parseInt(getMeta(ownerId, 'ticketSeq') || '1', 10)
   return { projects, skills, ticketSeq }
 }
-
-// A demo account so the app is explorable immediately.
-export function ensureDemoUser() {
-  if (!getUserByEmail('demo@orchestra.local')) {
-    createUser('demo@orchestra.local', 'Demo Nutzer', 'demo1234')
-  }
-}
-ensureDemoUser()
 
 export default db

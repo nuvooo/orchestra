@@ -62,7 +62,6 @@ export const api = {
   },
   stream(id: string): EventSource { return new EventSource(`${BASE}/tickets/${id}/stream`, { withCredentials: true }) },
   setSkillInstalled(name: string, installed: boolean) { return f(`/skills/${encodeURIComponent(name)}`, { method: 'PATCH', ...jsonBody({ installed }) }) },
-  async installSkill(name: string): Promise<{ skill: Skill; created: boolean }> { return j(await f('/skills/install', { method: 'POST', ...jsonBody({ name }) })) },
 }
 
 export type { ActivityStep }

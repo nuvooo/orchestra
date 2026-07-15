@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { PROVIDERS, WF_ROLES, seedSkills, seedProjects, initialWizardData } from './seed'
+import { PROVIDERS, WF_ROLES, initialWizardData } from './seed'
 import { planScript } from '../lib/plan'
 import { api } from './api'
 import type { AuthUser } from './api'
@@ -62,8 +62,8 @@ function makeInitialState(): OrchestraState {
     flowPhase: 'plan',
     pendingConnect: null,
     wizardData: initialWizardData(),
-    currentProjectId: 'p1',
-    activeTicket: 'TCK-09',
+    currentProjectId: '',
+    activeTicket: null,
     composerText: '',
     threadExtra: {},
     menuTicket: null,
@@ -75,11 +75,10 @@ function makeInitialState(): OrchestraState {
     planAnswers: {},
     ticketModalOpen: false,
     newTicket: { title: '', prio: 'Mittel', agentIds: [] },
-    ticketSeq: 40,
-    skillInput: '',
-    newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['web-search'] },
-    skills: seedSkills.map((s) => ({ ...s })),
-    projects: seedProjects.map((p) => ({ ...p })),
+    ticketSeq: 1,
+    newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['brainstorm'] },
+    skills: [],
+    projects: [],
     agentsConfigured: false,
     hydrated: false,
     user: null,
@@ -225,9 +224,10 @@ export function useOrchestraStore() {
   }, [])
 
   // ---- project helpers ----
-  const curProj = useCallback((): Project => {
+  // Null until the user creates their first project — a fresh workspace is empty.
+  const curProj = useCallback((): Project | null => {
     const s = stateRef.current
-    return s.projects.find((p) => p.id === s.currentProjectId) || s.projects[0]
+    return s.projects.find((p) => p.id === s.currentProjectId) || s.projects[0] || null
   }, [])
 
   // Debounced persistence of the current project's config (design.md,
@@ -344,6 +344,7 @@ export function useOrchestraStore() {
     if (e.target && e.target.tagName === 'INPUT') return
     e.preventDefault()
     const proj = curProj()
+    if (!proj) return
     const ph = stateRef.current.flowPhase
     const f = (proj.flows && proj.flows[ph]) || { nodes: [] as any[] }
     const n = f.nodes.find((x: any) => x.id === id)
@@ -501,13 +502,13 @@ export function useOrchestraStore() {
   const submitAgent = useCallback(() => {
     const na = stateRef.current.newAgent
     const name = na.name.trim() || 'Neuer Agent'
-    const agent = { id: 'x' + Date.now(), name, role: na.role.trim() || 'Custom Agent', wf: 'Sonstige', provider: na.provider, status: 'idle' as const, skills: na.skills.length ? na.skills : ['web-search'], hue: 240 + Math.floor(Math.random() * 120) }
+    const agent = { id: 'x' + Date.now(), name, role: na.role.trim() || 'Custom Agent', wf: 'Sonstige', provider: na.provider, status: 'idle' as const, skills: na.skills.length ? na.skills : ['brainstorm'], hue: 240 + Math.floor(Math.random() * 120) }
     const projectId = stateRef.current.currentProjectId
     setState((s) => ({
       projects: s.projects.map((p) => (p.id === s.currentProjectId ? { ...p, agents: [...p.agents, agent] } : p)),
       createOpen: false,
       view: 'agents',
-      newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['web-search'] },
+      newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['brainstorm'] },
     }))
     api.createAgent(projectId, agent)
   }, [setState])
@@ -518,19 +519,6 @@ export function useOrchestraStore() {
     setState((s) => { const cur = s.skills.find((k) => k.name === name); next = !cur?.installed; return { skills: s.skills.map((k) => (k.name === name ? { ...k, installed: !k.installed } : k)) } })
     api.setSkillInstalled(name, next)
   }, [setState])
-  const setSkillInput = useCallback((e: any) => setState({ skillInput: e.target.value }), [setState])
-  const installSkill = useCallback(() => {
-    let raw = stateRef.current.skillInput.trim()
-    if (!raw) return
-    raw = raw.replace(/^https?:\/\//, '').replace(/^skills\.sh\//, '').replace(/\s+/g, '-').toLowerCase()
-    setState((s) => {
-      const ex = s.skills.find((k) => k.name === raw)
-      if (ex) return { skills: s.skills.map((k) => (k.name === raw ? { ...k, installed: true } : k)), skillInput: '' }
-      return { skills: [{ name: raw, cat: 'Eigene', desc: 'Selbst installiert aus der skills.sh Registry.', installs: 'neu', installed: true }, ...s.skills], skillInput: '' }
-    })
-    api.installSkill(raw)
-  }, [setState])
-
   // ---- ticket modal ----
   const openTicketModal = useCallback(() => setState({ ticketModalOpen: true, switcherOpen: false, menuTicket: null, newTicket: { title: '', prio: 'Mittel', agentIds: [] } }), [setState])
   const closeTicketModal = useCallback(() => setState({ ticketModalOpen: false }), [setState])
@@ -546,6 +534,7 @@ export function useOrchestraStore() {
     const s0 = stateRef.current
     const nt = s0.newTicket
     const proj = curProj()
+    if (!proj) return
     const title = nt.title.trim() || 'Neues Ticket'
     const agentIds = nt.agentIds.length ? nt.agentIds : proj.agents[0] ? [proj.agents[0].id] : []
     const seq = s0.ticketSeq + 1
@@ -573,6 +562,7 @@ export function useOrchestraStore() {
   // ---- ticket detail ----
   const openTicket = useCallback((id: string) => {
     const proj = curProj()
+    if (!proj) return
     const tk = proj.tickets.find((t) => t.id === id)
     let ph = phaseForStatusLocal(tk ? tk.status : 'backlog')
     if (tk) {
@@ -589,6 +579,7 @@ export function useOrchestraStore() {
     if (!txt) return
     const id = s0.activeTicket!
     const proj = curProj()
+    if (!proj) return
     const tk = proj.tickets.find((t) => t.id === id)
     if (!tk) return
     const script = planScript(tk)
@@ -705,7 +696,7 @@ export function useOrchestraStore() {
       toggleSwitcher, pickProject, addProject, closeProject,
       wizNext, wizBack, wizGoto, setWizName, setWizDesign, setWizInstr, toggleWizJira, setWizJiraUrl, toggleWizSlack, setWizSlackChannel, addWizEnv, setWizEnvKey, setWizEnvVal, removeWizEnv, submitProject,
       openCreate, closeCreate, setName, setRole, setKindCloud, setKindLocal, pickProvider, toggleNewSkill, submitAgent,
-      toggleSkillInstall, setSkillInput, installSkill,
+      toggleSkillInstall,
       openTicketModal, closeTicketModal, setNewTicketTitle, setNewTicketPrio, toggleNewTicketAgent, submitTicket,
       openTicket, setPhase, setTermInput, submitTerm, onTermKey,
       toggleCardMenu, toggleStatusMenu, setTicketStatus,

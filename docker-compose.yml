@@ -2,7 +2,7 @@
 # SQLite is persisted on the ./data volume (no external database needed).
 #
 #   docker compose up --build
-#   -> http://localhost:8787  (demo login demo@orchestra.local / demo1234)
+#   -> http://localhost:8787  (register an account on first visit)
 #
 # Set ANTHROPIC_API_KEY (and optional Jira/Slack) in a .env file next to this
 # file to enable real agent runs and integrations.

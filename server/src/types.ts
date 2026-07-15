@@ -2,7 +2,7 @@
 // src/store/types.ts — both are hydrated from shared/seed.json.
 
 export interface Provider { id: string; label: string; kind: 'cloud' | 'local' }
-export interface Skill { name: string; cat: string; desc: string; installs: string; installed: boolean }
+export interface Skill { name: string; cat: string; desc: string; installed: boolean }
 
 export interface Agent {
   id: string; name: string; role: string; wf: string; provider: string
