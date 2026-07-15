@@ -1,0 +1,14 @@
+.git
+node_modules
+dist
+server/node_modules
+server/orchestra.db
+server/orchestra.db-shm
+server/orchestra.db-wal
+**/*.local
+.env
+server/.env
+data
+project
+chats
+screenshots

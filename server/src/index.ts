@@ -1,6 +1,9 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
+import fastifyStatic from '@fastify/static'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import * as db from './db.ts'
 import { subscribe } from './sse.ts'
 import { runAgent, agentsConfigured } from './agent/runner.ts'
@@ -148,6 +151,19 @@ app.post<{ Params: { id: string } }>('/api/projects/:id/slack-test', async (req,
   const { text } = (req.body as { text?: string }) || {}
   return postSlack(p, text || 'Testnachricht von Orchestra.')
 })
+
+// ---- serve the built SPA (production single-unit) ----
+// In dev, Vite serves the UI and proxies /api here, so WEB_DIR usually doesn't
+// exist and this is skipped. In prod/Docker, WEB_DIR points at the built dist.
+const WEB_DIR = process.env.WEB_DIR || resolve(process.cwd(), '../dist')
+if (existsSync(WEB_DIR)) {
+  await app.register(fastifyStatic, { root: WEB_DIR, wildcard: false })
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api/')) return reply.code(404).send({ message: 'Nicht gefunden.' })
+    return reply.sendFile('index.html') // SPA fallback
+  })
+  console.log(`Serving frontend from ${WEB_DIR}`)
+}
 
 const PORT = parseInt(process.env.PORT || '8787', 10)
 app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {

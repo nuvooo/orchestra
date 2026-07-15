@@ -1,0 +1,25 @@
+# One deployable unit: Fastify serves the built SPA + the API.
+# SQLite is persisted on the ./data volume (no external database needed).
+#
+#   docker compose up --build
+#   -> http://localhost:8787  (demo login demo@orchestra.local / demo1234)
+#
+# Set ANTHROPIC_API_KEY (and optional Jira/Slack) in a .env file next to this
+# file to enable real agent runs and integrations.
+
+services:
+  orchestra:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8787}:8787"
+    volumes:
+      - ./data:/data
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ORCHESTRA_MODEL=${ORCHESTRA_MODEL:-claude-opus-4-8}
+      - JIRA_EMAIL=${JIRA_EMAIL:-}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+    restart: unless-stopped

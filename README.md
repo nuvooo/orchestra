@@ -107,6 +107,39 @@ npm run build            # frontend (tsc + vite build)
 cd server && npm run typecheck
 ```
 
+## Deployment (single unit)
+
+In production the whole app ships as **one process**: the Fastify server serves both
+the API and the built frontend. Point `WEB_DIR` at the built `dist/` and the server
+serves the SPA (with a fallback so client-side routes work); `/api/*` stays the API.
+
+### Docker
+
+```bash
+cp server/.env.example .env      # optional: ANTHROPIC_API_KEY, Jira/Slack creds
+docker compose up --build        # http://localhost:8787
+```
+
+- The image is a multi-stage build: build the frontend, install the (native)
+  `better-sqlite3` server deps, then a slim runtime that runs the API and serves `dist/`.
+- SQLite lives on the **`./data` volume** (`DATABASE_FILE=/data/orchestra.db`), so your
+  data survives container rebuilds. No external database required.
+- Log in with the demo account (`demo@orchestra.local` / `demo1234`) or register.
+
+To run the same single-unit setup without Docker:
+
+```bash
+npm run build                                   # -> dist/
+cd server && npm install
+WEB_DIR=../dist DATABASE_FILE=./orchestra.db npm start
+# http://localhost:8787 serves both the UI and the API
+```
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push/PR to `main`: it typechecks + builds the
+frontend, typechecks the server, and builds the Docker image.
+
 ## Status & roadmap
 
 This is a phased build toward the full product:
@@ -123,7 +156,9 @@ This is a phased build toward the full product:
   (`server/src/db.ts`, `server/src/index.ts`); every user gets an isolated, seeded workspace
   (data scoped by `owner_id` with composite primary keys). A `demo@orchestra.local` account
   is created on first boot.
-- **Phase 4b — Deployment.** ⏭ Next: Postgres (the repository is Postgres-portable), hosting,
-  CI. Not started yet.
+- **Phase 4b — Deployment.** ✅ Done. Single-unit **Docker** image + `docker-compose.yml`
+  (the API serves the built SPA), SQLite persisted on a volume, and **GitHub Actions CI**
+  (frontend build, server typecheck, Docker build). SQLite stays the system of record — no
+  external database needed.
 
 Ported from a Claude Design HTML/CSS/JS prototype; the frontend matches it pixel-for-pixel.
