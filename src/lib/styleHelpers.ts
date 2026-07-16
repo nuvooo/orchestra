@@ -1,8 +1,12 @@
-import { PROVIDERS } from '../store/seed'
 import type { Provider, AgentStatus, TicketStatus } from '../store/types'
 
-export function provById(id: string): Provider {
-  return PROVIDERS.find((p) => p.id === id) || { id, label: id, kind: 'cloud' }
+/**
+ * The catalog is loaded from the server, so it must be passed in. An agent can
+ * reference a provider that is gone (uninstalled CLI, retired model) — fall
+ * back to showing the raw id rather than crashing.
+ */
+export function provById(providers: Provider[], id: string): Provider {
+  return providers.find((p) => p.id === id) || { id, label: id, kind: 'cloud', available: false, reason: 'unbekannter Provider' }
 }
 
 export function avatar(theme: 'light' | 'dark', hue: number | null) {

@@ -2,11 +2,11 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import fastifyStatic from '@fastify/static'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as db from './db.ts'
 import { subscribe } from './sse.ts'
-import { runAgent, agentsConfigured } from './agent/runner.ts'
+import { runAgent, agentsConfigured, providerCatalog } from './agent/runner.ts'
 import { fetchJiraIssues, postSlack } from './integrations.ts'
 import type { User } from './db.ts'
 import type { Agent, Project, Ticket } from './types.ts'
@@ -31,7 +31,7 @@ app.addHook('preHandler', async (req, reply) => {
 
 const uid = (req: any): string => (req.user as User).id
 
-app.get('/api/health', async () => ({ ok: true, agentsConfigured: agentsConfigured() }))
+app.get('/api/health', async () => ({ ok: true, agentsConfigured: await agentsConfigured() }))
 
 // ---- auth ----
 function setSession(reply: any, userId: string) {
@@ -63,14 +63,30 @@ app.post('/api/auth/logout', async (req, reply) => {
   return { ok: true }
 })
 
-app.get('/api/auth/me', async (req) => ({ user: (req as any).user || null, agentsConfigured: agentsConfigured() }))
+app.get('/api/auth/me', async (req) => ({ user: (req as any).user || null, agentsConfigured: await agentsConfigured() }))
 
 // ---- state ----
-app.get('/api/state', async (req) => ({ ...db.getState(uid(req)), agentsConfigured: agentsConfigured() }))
+app.get('/api/state', async (req) => ({ ...db.getState(uid(req)), agentsConfigured: await agentsConfigured() }))
+
+// ---- providers ----
+// What can actually run here: Anthropic models the account may use (asked via
+// the Models API) plus local CLIs found on PATH.
+app.get('/api/providers', async () => providerCatalog())
 
 // ---- projects ----
 app.post('/api/projects', async (req) => { const p = req.body as Project; db.createProject(uid(req), p); return db.getProject(uid(req), p.id) })
-app.patch<{ Params: { id: string } }>('/api/projects/:id', async (req) => { db.patchProject(uid(req), req.params.id, req.body as Partial<Project>); return db.getProject(uid(req), req.params.id) })
+app.patch<{ Params: { id: string } }>('/api/projects/:id', async (req, reply) => {
+  const patch = req.body as Partial<Project>
+  // The browser cannot see the server's filesystem, so the path is checked here.
+  if (typeof patch.workdir === 'string' && patch.workdir.trim()) {
+    const dir = patch.workdir.trim()
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+      return reply.code(400).send({ message: `„${dir}" existiert nicht oder ist kein Verzeichnis.` })
+    }
+  }
+  db.patchProject(uid(req), req.params.id, patch)
+  return db.getProject(uid(req), req.params.id)
+})
 
 // ---- agents ----
 app.post<{ Params: { id: string } }>('/api/projects/:id/agents', async (req) => { db.upsertAgent(uid(req), req.params.id, req.body as Agent); return db.getProject(uid(req), req.params.id) })
@@ -113,7 +129,6 @@ app.post<{ Params: { id: string } }>('/api/tickets/:id/plan-answer', async (req,
 
 // ---- real KI agent run + live stream ----
 app.post<{ Params: { id: string } }>('/api/tickets/:id/run', async (req, reply) => {
-  if (!agentsConfigured()) return reply.code(503).send({ ok: false, message: 'ANTHROPIC_API_KEY nicht gesetzt — trage ihn in server/.env ein, um echte Agentenläufe zu aktivieren.' })
   runAgent(uid(req), req.params.id).catch(() => {})
   return { ok: true, started: true }
 })
@@ -157,6 +172,11 @@ if (existsSync(WEB_DIR)) {
 }
 
 const PORT = parseInt(process.env.PORT || '8787', 10)
-app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {
-  console.log(`Orchestra API on http://localhost:${PORT}  (agents ${agentsConfigured() ? 'ON' : 'OFF — set ANTHROPIC_API_KEY'})`)
+app.listen({ port: PORT, host: '0.0.0.0' }).then(async () => {
+  const providers = await providerCatalog()
+  const ready = providers.filter((p) => p.available)
+  const summary = ready.length
+    ? ready.map((p) => p.label).join(', ')
+    : 'keine — ANTHROPIC_API_KEY setzen oder eine lokale CLI installieren'
+  console.log(`Orchestra API on http://localhost:${PORT}\n  Provider: ${summary}`)
 })

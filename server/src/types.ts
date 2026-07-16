@@ -38,6 +38,8 @@ export interface Project {
   jira: { connected: boolean; url?: string }
   slack: { connected: boolean; channel?: string }
   designMd: string; instructions: string
+  /** Absolute path local CLI agents run in. Empty until the user sets one. */
+  workdir?: string
   envs: { key: string; value: string }[]
   jiraInbox: { key: string; title: string; type: string }[]
   roles: string[]

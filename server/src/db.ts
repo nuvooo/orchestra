@@ -19,7 +19,7 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS projects (
     owner_id TEXT, id TEXT, name TEXT, hue INTEGER,
-    jira TEXT, slack TEXT, designMd TEXT, instructions TEXT,
+    jira TEXT, slack TEXT, designMd TEXT, instructions TEXT, workdir TEXT,
     envs TEXT, jiraInbox TEXT, roles TEXT, flows TEXT, ord INTEGER,
     PRIMARY KEY (owner_id, id)
   );
@@ -55,12 +55,21 @@ try {
   if (e?.message === 'schema-reset') {
     // re-run creation
     db.exec(`
-      CREATE TABLE IF NOT EXISTS projects (owner_id TEXT, id TEXT, name TEXT, hue INTEGER, jira TEXT, slack TEXT, designMd TEXT, instructions TEXT, envs TEXT, jiraInbox TEXT, roles TEXT, flows TEXT, ord INTEGER, PRIMARY KEY (owner_id, id));
+      CREATE TABLE IF NOT EXISTS projects (owner_id TEXT, id TEXT, name TEXT, hue INTEGER, jira TEXT, slack TEXT, designMd TEXT, instructions TEXT, workdir TEXT, envs TEXT, jiraInbox TEXT, roles TEXT, flows TEXT, ord INTEGER, PRIMARY KEY (owner_id, id));
       CREATE TABLE IF NOT EXISTS agents (owner_id TEXT, id TEXT, project_id TEXT, name TEXT, role TEXT, wf TEXT, provider TEXT, status TEXT, skills TEXT, hue INTEGER, ord INTEGER, PRIMARY KEY (owner_id, id));
       CREATE TABLE IF NOT EXISTS tickets (owner_id TEXT, id TEXT, project_id TEXT, title TEXT, status TEXT, prio TEXT, agent_id TEXT, agent_ids TEXT, skill TEXT, elapsed TEXT, tokens TEXT, updated TEXT, descr TEXT, activity TEXT, plan_questions TEXT, plan TEXT, from_jira INTEGER, running INTEGER, ord INTEGER, PRIMARY KEY (owner_id, id));
       CREATE TABLE IF NOT EXISTS skills (owner_id TEXT, name TEXT, cat TEXT, descr TEXT, installed INTEGER, ord INTEGER, PRIMARY KEY (owner_id, name));
       CREATE TABLE IF NOT EXISTS meta ( owner_id TEXT, key TEXT, value TEXT, PRIMARY KEY (owner_id, key) );
     `)
+  }
+}
+
+// Additive migrations. CREATE TABLE IF NOT EXISTS does nothing to a table that
+// already exists, so new columns must be added explicitly for existing DBs.
+for (const [table, column, ddl] of [['projects', 'workdir', 'workdir TEXT']] as const) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (cols.length && !cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`)
   }
 }
 
@@ -134,10 +143,10 @@ function seedForUser(ownerId: string) {
 
 function insertProjectRow(ownerId: string, p: Project, ord: number) {
   db.prepare(`INSERT OR REPLACE INTO projects
-    (owner_id,id,name,hue,jira,slack,designMd,instructions,envs,jiraInbox,roles,flows,ord)
-    VALUES (@owner_id,@id,@name,@hue,@jira,@slack,@designMd,@instructions,@envs,@jiraInbox,@roles,@flows,@ord)`).run({
+    (owner_id,id,name,hue,jira,slack,designMd,instructions,workdir,envs,jiraInbox,roles,flows,ord)
+    VALUES (@owner_id,@id,@name,@hue,@jira,@slack,@designMd,@instructions,@workdir,@envs,@jiraInbox,@roles,@flows,@ord)`).run({
     owner_id: ownerId, id: p.id, name: p.name, hue: p.hue, jira: J(p.jira), slack: J(p.slack),
-    designMd: p.designMd || '', instructions: p.instructions || '',
+    designMd: p.designMd || '', instructions: p.instructions || '', workdir: p.workdir || '',
     envs: J(p.envs || []), jiraInbox: J(p.jiraInbox || []), roles: J(p.roles || []),
     flows: J(p.flows || null), ord,
   })
@@ -179,10 +188,10 @@ export function patchProject(ownerId: string, id: string, patch: Partial<Project
   if (!cur) return
   const merged = { ...cur, ...patch }
   db.prepare(`UPDATE projects SET
-    name=@name, jira=@jira, slack=@slack, designMd=@designMd, instructions=@instructions,
+    name=@name, jira=@jira, slack=@slack, designMd=@designMd, instructions=@instructions, workdir=@workdir,
     envs=@envs, jiraInbox=@jiraInbox, roles=@roles, flows=@flows WHERE owner_id=@owner_id AND id=@id`).run({
     owner_id: ownerId, id, name: merged.name, jira: J(merged.jira), slack: J(merged.slack),
-    designMd: merged.designMd || '', instructions: merged.instructions || '',
+    designMd: merged.designMd || '', instructions: merged.instructions || '', workdir: merged.workdir || '',
     envs: J(merged.envs || []), jiraInbox: J(merged.jiraInbox || []),
     roles: J(merged.roles || []), flows: J(merged.flows || null),
   })
@@ -244,7 +253,7 @@ function rowToProject(r: any): Project {
   return {
     id: r.id, name: r.name, hue: r.hue,
     jira: P(r.jira, { connected: false }), slack: P(r.slack, { connected: false }),
-    designMd: r.designMd || '', instructions: r.instructions || '',
+    designMd: r.designMd || '', instructions: r.instructions || '', workdir: r.workdir || '',
     envs: P(r.envs, []), jiraInbox: P(r.jiraInbox, []), roles: P(r.roles, []),
     flows: P(r.flows, null), agents: [], tickets: [],
   }

@@ -1,12 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { PROVIDERS, WF_ROLES, initialWizardData } from './seed'
+import { WF_ROLES, initialWizardData } from './seed'
 import { planScript } from '../lib/plan'
 import { api } from './api'
 import type { AuthUser } from './api'
 import type {
   OrchestraState,
   Project,
+  Provider,
   Flows,
   Phase,
   View,
@@ -76,9 +77,10 @@ function makeInitialState(): OrchestraState {
     ticketModalOpen: false,
     newTicket: { title: '', prio: 'Mittel', agentIds: [] },
     ticketSeq: 1,
-    newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['brainstorm'] },
+    newAgent: { name: '', role: '', providerKind: 'cloud', provider: '', skills: ['brainstorm'] },
     skills: [],
     projects: [],
+    providers: [],
     agentsConfigured: false,
     hydrated: false,
     user: null,
@@ -108,14 +110,20 @@ export function useOrchestraStore() {
 
   // ---- hydration + auth ----
   const hydrate = useCallback(() => {
-    return api
-      .getState()
-      .then((data) => {
+    // Providers come from the server too — it is the only side that can see
+    // which CLIs are installed and which models the API key may use.
+    return Promise.all([api.getState(), api.providers().catch(() => [] as Provider[])])
+      .then(([data, providers]) => {
         const projects = data.projects.map((p) => (p.flows ? p : { ...p, flows: buildDefaultFlows(p) }))
         setState((s) => {
           const stillValid = projects.some((p) => p.id === s.currentProjectId)
           const cur = stillValid ? s.currentProjectId : projects[0]?.id || s.currentProjectId
-          return { projects, skills: data.skills, ticketSeq: data.ticketSeq, agentsConfigured: data.agentsConfigured, hydrated: true, currentProjectId: cur }
+          const firstUsable = providers.find((p) => p.available)
+          return {
+            projects, skills: data.skills, ticketSeq: data.ticketSeq, providers,
+            agentsConfigured: data.agentsConfigured, hydrated: true, currentProjectId: cur,
+            newAgent: { ...s.newAgent, provider: firstUsable?.id || s.newAgent.provider },
+          }
         })
       })
       .catch(() => setState({ hydrated: true }))
@@ -429,6 +437,7 @@ export function useOrchestraStore() {
   }, [setState, persistProjectSoon])
   const setDesignMd = useCallback((e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, designMd: v })) }, [updateProj])
   const setInstructions = useCallback((e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, instructions: v })) }, [updateProj])
+  const setWorkdir = useCallback((e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, workdir: v })) }, [updateProj])
   const addEnv = useCallback(() => updateProj((p) => ({ ...p, envs: [...(p.envs || []), { key: '', value: '' }] })), [updateProj])
   const setEnvKey = useCallback((i: number, e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, envs: p.envs.map((x, ix) => (ix === i ? { ...x, key: v } : x)) })) }, [updateProj])
   const setEnvVal = useCallback((i: number, e: any) => { const v = e.target.value; updateProj((p) => ({ ...p, envs: p.envs.map((x, ix) => (ix === i ? { ...x, value: v } : x)) })) }, [updateProj])
@@ -487,8 +496,10 @@ export function useOrchestraStore() {
   const setName = useCallback((e: any) => setState((s) => ({ newAgent: { ...s.newAgent, name: e.target.value } })), [setState])
   const setRole = useCallback((e: any) => setState((s) => ({ newAgent: { ...s.newAgent, role: e.target.value } })), [setState])
   const setKind = useCallback((kind: 'cloud' | 'local') => {
-    const first = PROVIDERS.find((p) => p.kind === kind)
-    setState((s) => ({ newAgent: { ...s.newAgent, providerKind: kind, provider: first ? first.id : s.newAgent.provider } }))
+    setState((s) => {
+      const first = s.providers.find((p) => p.kind === kind && p.available)
+      return { newAgent: { ...s.newAgent, providerKind: kind, provider: first ? first.id : s.newAgent.provider } }
+    })
   }, [setState])
   const setKindCloud = useCallback(() => setKind('cloud'), [setKind])
   const setKindLocal = useCallback(() => setKind('local'), [setKind])
@@ -508,7 +519,7 @@ export function useOrchestraStore() {
       projects: s.projects.map((p) => (p.id === s.currentProjectId ? { ...p, agents: [...p.agents, agent] } : p)),
       createOpen: false,
       view: 'agents',
-      newAgent: { name: '', role: '', providerKind: 'cloud', provider: 'claude-sonnet-4.5', skills: ['brainstorm'] },
+      newAgent: { name: '', role: '', providerKind: 'cloud', provider: '', skills: ['brainstorm'] },
     }))
     api.createAgent(projectId, agent)
   }, [setState])
@@ -692,7 +703,7 @@ export function useOrchestraStore() {
       setWfRole, setRoleInput, addRole, removeRole,
       setFlowPhase, addFlowNode, setNodeLabel, deleteNode, beginNodeDrag, clickPort, cancelConnect, deleteEdge, setNodeAgent, toggleNodeSkill,
       toggleJira, toggleSlack, setJiraUrl, setSlackChannel, importJira,
-      setDesignMd, setInstructions, addEnv, setEnvKey, setEnvVal, removeEnv,
+      setDesignMd, setInstructions, setWorkdir, addEnv, setEnvKey, setEnvVal, removeEnv,
       toggleSwitcher, pickProject, addProject, closeProject,
       wizNext, wizBack, wizGoto, setWizName, setWizDesign, setWizInstr, toggleWizJira, setWizJiraUrl, toggleWizSlack, setWizSlackChannel, addWizEnv, setWizEnvKey, setWizEnvVal, removeWizEnv, submitProject,
       openCreate, closeCreate, setName, setRole, setKindCloud, setKindLocal, pickProvider, toggleNewSkill, submitAgent,
@@ -736,5 +747,5 @@ export function useOrchestra(): Ctx {
   return ctx
 }
 
-export { WIZ_STEPS, WF_ROLES, PROVIDERS }
+export { WIZ_STEPS, WF_ROLES }
 export type { ActivityStep }
