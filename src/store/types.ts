@@ -4,13 +4,17 @@ export interface Provider {
   id: string
   label: string
   kind: ProviderKind
+  /** Detected server-side: is this usable on the machine running Orchestra? */
+  available: boolean
+  version?: string
+  /** Why it is unavailable — shown instead of a silent missing entry. */
+  reason?: string
 }
 
 export interface Skill {
   name: string
   cat: string
   desc: string
-  installs: string
   installed: boolean
 }
 
@@ -135,6 +139,8 @@ export interface Project {
   slack: Integration
   designMd: string
   instructions: string
+  /** Absolute path local CLI agents run in. Empty until the user sets one. */
+  workdir?: string
   envs: EnvVar[]
   jiraInbox: JiraInboxItem[]
   roles: string[]
@@ -171,6 +177,7 @@ export interface WizardData {
   name: string
   designMd: string
   instructions: string
+  workdir?: string
   jira: Integration
   slack: Integration
   envs: EnvVar[]
@@ -217,10 +224,10 @@ export interface OrchestraState {
   ticketModalOpen: boolean
   newTicket: NewTicketDraft
   ticketSeq: number
-  skillInput: string
   newAgent: NewAgentDraft
   skills: Skill[]
   projects: Project[]
+  providers: Provider[]
   agentsConfigured: boolean
   hydrated: boolean
   user: { id: string; email: string; name: string } | null

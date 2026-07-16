@@ -1,78 +1,35 @@
-import Anthropic from '@anthropic-ai/sdk'
 import * as dbmod from '../db.ts'
 import { broadcast } from '../sse.ts'
-import type { ActivityStep, Agent, Project, Ticket } from '../types.ts'
+import type { ActivityStep, Agent, Ticket } from '../types.ts'
+import { credentialsConfigured } from './providers/anthropic.ts'
+import * as registry from './providers/registry.ts'
+import type { RunContext } from './providers/types.ts'
 
-const MODEL = process.env.ORCHESTRA_MODEL || 'claude-opus-4-8'
+export { catalog as providerCatalog } from './providers/registry.ts'
 
-export function agentsConfigured(): boolean {
-  return !!process.env.ANTHROPIC_API_KEY
+/** True when at least one provider can actually run — cloud or local CLI. */
+export async function agentsConfigured(): Promise<boolean> {
+  return registry.anyAvailable()
 }
 
-function clientOrNull(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null
-  return new Anthropic() // reads ANTHROPIC_API_KEY (+ ANTHROPIC_BASE_URL) from env
-}
-
-function phaseForStatus(s: string): 'plan' | 'build' | 'review' {
-  return s === 'backlog' || s === 'ready' ? 'plan' : s === 'review' || s === 'done' ? 'review' : 'build'
-}
-
-function nowLabel(): string {
-  return 'gerade eben'
-}
-
-// Each installed skill the acting agent owns becomes a client tool. The tool's
-// side effect is illustrative (the model's reasoning is the real work); a real
-// deployment would wire these to actual integrations.
-function toolFor(skill: string): Anthropic.Tool {
-  const schemas: Record<string, Anthropic.Tool.InputSchema> = {
-    'web-search': { type: 'object', properties: { query: { type: 'string', description: 'Suchanfrage' } }, required: ['query'] },
-    'brainstorm': { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] },
-    'grillme': { type: 'object', properties: { assumptions: { type: 'string', description: 'Zu prüfende Annahmen' } }, required: ['assumptions'] },
-    'summarize': { type: 'object', properties: { source: { type: 'string' } }, required: ['source'] },
-    'code-review': { type: 'object', properties: { scope: { type: 'string' } }, required: ['scope'] },
-    'pdf-extract': { type: 'object', properties: { file: { type: 'string' } }, required: ['file'] },
-    'sql-query': { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] },
-    'send-email': { type: 'object', properties: { to: { type: 'string' }, subject: { type: 'string' } }, required: ['to'] },
-    'slack-post': { type: 'object', properties: { channel: { type: 'string' }, text: { type: 'string' } }, required: ['channel', 'text'] },
-    'image-gen': { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] },
-    'csv-transform': { type: 'object', properties: { file: { type: 'string' } }, required: ['file'] },
-  }
-  return {
-    name: skill.replace(/-/g, '_'),
-    description: `Skill „${skill}" ausführen.`,
-    input_schema: schemas[skill] || { type: 'object', properties: { input: { type: 'string' } } },
-  }
-}
-
-function runSkill(skill: string, input: any): string {
-  // Illustrative skill execution. Returns a short, plausible result the agent
-  // can reason about. Replace with real integrations per skill as needed.
-  switch (skill) {
-    case 'web-search': return `4 relevante Primärquellen zu „${input.query}" gefunden.`
-    case 'brainstorm': return `5 Lösungsansätze zu „${input.topic}" gesammelt.`
-    case 'grillme': return `Annahmen kritisch geprüft: ${input.assumptions}.`
-    case 'summarize': return `Kernpunkte aus „${input.source}" verdichtet.`
-    case 'code-review': return `Diff analysiert (${input.scope || 'scope'}) · 2 Findings mittlerer Schwere.`
-    case 'pdf-extract': return `Tabellen und Kennzahlen aus „${input.file}" extrahiert.`
-    case 'sql-query': return `Read-only Abfrage auf „${input.table}" ausgeführt.`
-    case 'send-email': return `E-Mail an ${input.to} vorbereitet (Rückfrage vor Versand).`
-    case 'slack-post': return `Nachricht für ${input.channel} formuliert.`
-    case 'image-gen': return `UI-Variante erzeugt: ${input.prompt}.`
-    case 'csv-transform': return `CSV „${input.file}" geparst und umgeformt.`
-    default: return 'Skill ausgeführt.'
-  }
+/** Cheap synchronous variant for the startup banner. */
+export function cloudConfigured(): boolean {
+  return credentialsConfigured()
 }
 
 interface RunResult { ok: boolean; message: string }
 
-const running = new Set<string>()
+const running = new Map<string, AbortController>()
+
+export function stopAgent(ownerId: string, ticketId: string): boolean {
+  const ctrl = running.get(ownerId + ':' + ticketId)
+  if (!ctrl) return false
+  ctrl.abort()
+  return true
+}
 
 export async function runAgent(ownerId: string, ticketId: string): Promise<RunResult> {
   const chan = ownerId + ':' + ticketId
-  const client = clientOrNull()
-  if (!client) return { ok: false, message: 'ANTHROPIC_API_KEY nicht gesetzt — Agenten sind nicht konfiguriert. Trage den Key in server/.env ein, um echte Läufe zu aktivieren.' }
   if (running.has(chan)) return { ok: false, message: 'Läuft bereits.' }
 
   const t = dbmod.getTicket(ownerId, ticketId)
@@ -84,103 +41,83 @@ export async function runAgent(ownerId: string, ticketId: string): Promise<RunRe
   const actor = team[0]
   if (!actor) return { ok: false, message: 'Dem Ticket ist kein Agent zugewiesen.' }
 
-  running.add(chan)
-  const phase = phaseForStatus(t.status)
-  const installed = new Set(dbmod.getState(ownerId).skills.filter((s) => s.installed).map((s) => s.name))
-  const skills = (actor.skills || []).filter((s) => installed.has(s))
-  const tools = skills.map(toolFor)
-  const toolNameToSkill = new Map(skills.map((s) => [s.replace(/-/g, '_'), s]))
-
-  // mark running
-  dbmod.saveTicket(ownerId, { ...t, running: true, status: t.status === 'backlog' || t.status === 'ready' ? t.status : 'in_progress', updated: nowLabel() })
-  broadcast(chan, 'status', { running: true })
-
-  const started = Date.now()
-  const append = (step: ActivityStep) => {
-    const updated = dbmod.appendActivity(ownerId, ticketId, step)
-    broadcast(chan, 'step', step)
-    return updated
+  const adapter = await registry.get(actor.provider)
+  if (!adapter) {
+    return { ok: false, message: `Provider „${actor.provider}" ist hier nicht verfügbar.` }
+  }
+  const detection = await adapter.detect()
+  if (!detection.available) {
+    return { ok: false, message: `${adapter.label} ist nicht verfügbar: ${detection.reason || 'unbekannter Grund'}` }
   }
 
-  const system = buildSystem(project, actor, t)
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: buildTask(t) }]
+  const controller = new AbortController()
+  running.set(chan, controller)
+  const phase = phaseForStatus(t.status)
 
-  let totalOut = 0
+  dbmod.saveTicket(ownerId, {
+    ...t, running: true,
+    status: t.status === 'backlog' || t.status === 'ready' ? t.status : 'in_progress',
+    updated: 'gerade eben',
+  })
+  broadcast(chan, 'status', { running: true })
+
+  const append = (step: ActivityStep) => {
+    dbmod.appendActivity(ownerId, ticketId, step)
+    broadcast(chan, 'step', step)
+  }
+
+  const ctx: RunContext = { ownerId, project, agent: actor, ticket: t, signal: controller.signal }
+  const started = Date.now()
+  let summary = { outputTokens: 0 }
+
   try {
-    for (let i = 0; i < 8; i++) {
-      // Built as `any` so newer request fields (adaptive thinking, effort) work
-      // regardless of the installed @anthropic-ai/sdk type version.
-      const params: any = {
-        model: MODEL,
-        max_tokens: 4096,
-        thinking: { type: 'adaptive' },
-        output_config: { effort: 'high' },
-        system,
-        tools,
-        messages,
-      }
-      const resp = await client.messages.create(params)
-      totalOut += resp.usage.output_tokens || 0
-
-      const toolUses = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-      const texts = resp.content.filter((b): b is Anthropic.TextBlock => b.type === 'text')
-
-      for (const txt of texts) {
-        if (txt.text.trim()) {
-          append({ type: toolUses.length ? 'thought' : 'message', actor: actor.id, phase, time: hhmm(), action: toolUses.length ? 'plante das Vorgehen' : 'meldete Ergebnis', text: txt.text.trim() })
-        }
-      }
-
-      if (resp.stop_reason !== 'tool_use') break
-
-      messages.push({ role: 'assistant', content: resp.content })
-      const toolResults: Anthropic.ToolResultBlockParam[] = []
-      for (const tu of toolUses) {
-        const skill = toolNameToSkill.get(tu.name) || tu.name
-        const result = runSkill(skill, tu.input)
-        append({ type: 'skill', actor: actor.id, phase, time: hhmm(), action: `nutzte ${skill}`, skillName: skill, args: JSON.stringify(tu.input), result, ok: true })
-        toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result })
-      }
-      messages.push({ role: 'user', content: toolResults })
+    const it = adapter.run(ctx)
+    let r = await it.next()
+    while (!r.done) {
+      append(r.value)
+      r = await it.next()
     }
+    summary = r.value
   } catch (e: any) {
-    append({ type: 'error', actor: actor.id, phase, time: hhmm(), text: 'Lauf abgebrochen: ' + (e?.message || String(e)) })
-    dbmod.saveTicket(ownerId, { ...dbmod.getTicket(ownerId, ticketId)!, running: false })
-    running.delete(chan)
-    broadcast(chan, 'status', { running: false })
-    return { ok: false, message: e?.message || 'Fehler beim Agentenlauf.' }
+    const aborted = controller.signal.aborted
+    append({
+      type: 'error', actor: actor.id, phase, time: hhmm(),
+      text: aborted ? 'Lauf abgebrochen.' : 'Lauf abgebrochen: ' + (e?.message || String(e)),
+    })
+    finish(ownerId, ticketId, chan, controller)
+    return { ok: false, message: aborted ? 'Abgebrochen.' : (e?.message || 'Fehler beim Agentenlauf.') }
   }
 
   const secs = Math.round((Date.now() - started) / 1000)
   const finalT = dbmod.getTicket(ownerId, ticketId)!
-  dbmod.saveTicket(ownerId, { ...finalT, running: false, updated: nowLabel(), elapsed: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, tokens: totalOut >= 1000 ? (totalOut / 1000).toFixed(1) + 'k' : String(totalOut) })
+  const out = summary.outputTokens
+  dbmod.saveTicket(ownerId, {
+    ...finalT, running: false, updated: 'gerade eben',
+    elapsed: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
+    tokens: out >= 1000 ? (out / 1000).toFixed(1) + 'k' : String(out),
+  })
   running.delete(chan)
   broadcast(chan, 'status', { running: false })
   broadcast(chan, 'done', {})
   return { ok: true, message: 'Lauf abgeschlossen.' }
 }
 
+function finish(ownerId: string, ticketId: string, chan: string, _c: AbortController) {
+  const cur = dbmod.getTicket(ownerId, ticketId)
+  if (cur) dbmod.saveTicket(ownerId, { ...cur, running: false })
+  running.delete(chan)
+  broadcast(chan, 'status', { running: false })
+}
+
 function ticketTeam(t: Ticket): string[] {
   return t.agentIds && t.agentIds.length ? t.agentIds : t.agentId ? [t.agentId] : []
 }
 
+function phaseForStatus(s: string): 'plan' | 'build' | 'review' {
+  return s === 'backlog' || s === 'ready' ? 'plan' : s === 'review' || s === 'done' ? 'review' : 'build'
+}
+
 function hhmm(): string {
-  // Deterministic-ish clock label; the app shows relative times elsewhere.
   const d = new Date()
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
-function buildSystem(project: Project, agent: Agent, t: Ticket): string {
-  const lines = [
-    `Du bist „${agent.name}", ein KI-Agent mit der Rolle „${agent.role}" im Projekt „${project.name}".`,
-    `Deine Workflow-Rolle ist „${agent.wf}". Arbeite fokussiert am zugewiesenen Ticket.`,
-    'Antworte auf Deutsch. Nutze verfügbare Skills (Tools), wenn sie dich dem Ziel näher bringen. Halte Zwischenschritte kurz; liefere am Ende ein klares Ergebnis.',
-  ]
-  if (project.instructions) lines.push('\nProjekt-Anweisungen:\n' + project.instructions)
-  if (project.designMd) lines.push('\nDesign-/Stilrichtlinien (design.md):\n' + project.designMd)
-  return lines.join('\n')
-}
-
-function buildTask(t: Ticket): string {
-  return `Aufgabe (${t.id}): ${t.title}\n\n${t.desc}\n\nBearbeite diese Aufgabe Schritt für Schritt. Wenn eine Planung sinnvoll ist, plane zuerst. Nutze passende Skills und fasse am Ende dein Ergebnis zusammen.`
 }

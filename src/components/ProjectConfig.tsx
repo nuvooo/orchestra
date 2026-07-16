@@ -123,6 +123,21 @@ export function ProjectConfig({ v }: { v: Vals }) {
         <textarea value={c.instructions} onChange={v.setInstructions} placeholder="z. B. Immer auf Deutsch antworten. Keine Secrets ausgeben…" style={sx('width:100%;padding:13px 15px;border-radius:11px;border:1px solid var(--border);background:var(--surface-2);outline:none;font-size:13.5px;line-height:1.6;min-height:110px;resize:vertical;')}></textarea>
       </div>
 
+      {/* Arbeitsverzeichnis */}
+      <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:15px;box-shadow:var(--shadow);padding:20px;')}>
+        <h3 style={sx('margin:0 0 4px;font-size:15px;font-weight:600;')}>Arbeitsverzeichnis</h3>
+        <p style={sx('margin:0 0 12px;font-size:13px;color:var(--text-2);line-height:1.55;')}>
+          Verzeichnis, in dem lokale CLI-Agenten laufen. Sie dürfen dort Dateien <b style={sx('font-weight:600;color:var(--text);')}>lesen und schreiben</b> —
+          es sollte deshalb unter Git-Versionskontrolle stehen, damit du Änderungen zurückrollen kannst.
+        </p>
+        <input
+          value={c.workdir}
+          onChange={v.setWorkdir}
+          placeholder="z. B. C:\Users\du\meinrepo"
+          style={sx("width:100%;padding:11px 13px;border-radius:11px;border:1px solid var(--border);background:var(--surface-2);outline:none;font-size:13px;color:var(--text);font-family:'JetBrains Mono',monospace;")}
+        />
+      </div>
+
       {/* Env */}
       <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:15px;box-shadow:var(--shadow);padding:20px;')}>
         <div style={sx('display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;')}>

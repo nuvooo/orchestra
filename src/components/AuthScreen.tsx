@@ -21,13 +21,6 @@ export function AuthScreen({ v }: { v: Vals }) {
     // on success the app re-renders into the main view (user is set)
   }
 
-  const useDemo = async () => {
-    setBusy(true); setError('')
-    const r = await v.login('demo@orchestra.local', 'demo1234')
-    setBusy(false)
-    if (!r.ok) setError(r.message || 'Demo-Login fehlgeschlagen.')
-  }
-
   return (
     <div style={sx("min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--text);font-family:'Instrument Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:20px;")}>
       <div style={sx('width:400px;max-width:100%;animation:fadeUp .3s ease both;')}>
@@ -40,7 +33,7 @@ export function AuthScreen({ v }: { v: Vals }) {
 
         <div style={sx('background:var(--surface);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow-lg);padding:26px;')}>
           <h1 style={sx('margin:0 0 4px;font-size:19px;font-weight:700;')}>{mode === 'login' ? 'Anmelden' : 'Konto erstellen'}</h1>
-          <p style={sx('margin:0 0 20px;font-size:13px;color:var(--text-2);')}>{mode === 'login' ? 'Melde dich an, um deinen Workspace zu öffnen.' : 'Registriere dich — dein Workspace wird mit Beispielprojekten eingerichtet.'}</p>
+          <p style={sx('margin:0 0 20px;font-size:13px;color:var(--text-2);')}>{mode === 'login' ? 'Melde dich an, um deinen Workspace zu öffnen.' : 'Registriere dich und lege dein erstes Projekt an.'}</p>
 
           <form onSubmit={submit} style={sx('display:flex;flex-direction:column;gap:14px;')}>
             {mode === 'register' && (
@@ -64,13 +57,6 @@ export function AuthScreen({ v }: { v: Vals }) {
               {busy ? 'Bitte warten…' : mode === 'login' ? 'Anmelden' : 'Konto erstellen'}
             </H>
           </form>
-
-          <div style={sx('display:flex;align-items:center;gap:10px;margin:18px 0;')}>
-            <span style={sx('flex:1;height:1px;background:var(--border);')}></span>
-            <span style={sx('font-size:11.5px;color:var(--text-3);')}>oder</span>
-            <span style={sx('flex:1;height:1px;background:var(--border);')}></span>
-          </div>
-          <H as="button" onClick={useDemo} disabled={busy} hover="background:var(--surface-3)" css="width:100%;padding:11px;border-radius:11px;background:var(--surface-2);border:1px solid var(--border);font-size:13.5px;font-weight:600;color:var(--text);transition:background .12s;">Als Demo-Nutzer ansehen</H>
         </div>
 
         <div style={sx('text-align:center;margin-top:16px;font-size:13px;color:var(--text-2);')}>

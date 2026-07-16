@@ -13,6 +13,7 @@ import { ProjectWizard } from './components/modals/ProjectWizard'
 import { TicketModal } from './components/modals/TicketModal'
 import { AgentSlideOver } from './components/modals/AgentSlideOver'
 import { AuthScreen } from './components/AuthScreen'
+import { EmptyWorkspace } from './components/EmptyWorkspace'
 
 export default function App() {
   const v = useDerived()
@@ -33,13 +34,21 @@ export default function App() {
       <main style={sx('flex:1;min-width:0;display:flex;flex-direction:column;')}>
         <Header v={v} />
         <div style={sx('flex:1;padding:26px 28px 60px;max-width:1240px;width:100%;')}>
-          {v.isDashboard && <Dashboard v={v} />}
-          {v.isTickets && <Board v={v} />}
-          {v.isTicket && <TicketDetail v={v} />}
-          {v.isAgents && <Agents v={v} />}
-          {v.isSkills && <Skills v={v} />}
-          {v.isSettings && <Settings v={v} />}
-          {v.isProjectCfg && <ProjectConfig v={v} />}
+          {/* Without a project there is nothing to show on the project-scoped
+              views — Skills and Settings stand on their own. */}
+          {!v.hasProjects && !v.isSkills && !v.isSettings ? (
+            <EmptyWorkspace v={v} />
+          ) : (
+            <>
+              {v.isDashboard && <Dashboard v={v} />}
+              {v.isTickets && <Board v={v} />}
+              {v.isTicket && <TicketDetail v={v} />}
+              {v.isAgents && <Agents v={v} />}
+              {v.isSkills && <Skills v={v} />}
+              {v.isSettings && <Settings v={v} />}
+              {v.isProjectCfg && <ProjectConfig v={v} />}
+            </>
+          )}
         </div>
       </main>
 

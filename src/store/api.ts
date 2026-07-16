@@ -1,4 +1,4 @@
-import type { Agent, Project, Ticket, ActivityStep, Skill } from './types'
+import type { Agent, Project, Ticket, ActivityStep, Skill, Provider } from './types'
 
 // Thin client for the Orchestra backend. All calls hit /api (proxied to the
 // server in dev) and include the session cookie.
@@ -23,6 +23,11 @@ export interface HydratedState {
 }
 
 export const api = {
+  // ---- providers ----
+  async providers(): Promise<Provider[]> {
+    return j(await f('/providers'))
+  },
+
   // ---- auth ----
   async me(): Promise<{ user: AuthUser | null; agentsConfigured: boolean }> {
     return j(await f('/auth/me'))
@@ -62,7 +67,6 @@ export const api = {
   },
   stream(id: string): EventSource { return new EventSource(`${BASE}/tickets/${id}/stream`, { withCredentials: true }) },
   setSkillInstalled(name: string, installed: boolean) { return f(`/skills/${encodeURIComponent(name)}`, { method: 'PATCH', ...jsonBody({ installed }) }) },
-  async installSkill(name: string): Promise<{ skill: Skill; created: boolean }> { return j(await f('/skills/install', { method: 'POST', ...jsonBody({ name }) })) },
 }
 
 export type { ActivityStep }

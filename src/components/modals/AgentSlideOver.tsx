@@ -43,19 +43,25 @@ export function AgentSlideOver({ v }: { v: Vals }) {
             <label style={sx('font-size:12px;font-weight:600;color:var(--text-2);')}>{v.providerLabel}</label>
             <div style={sx('display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;')}>
               {v.providerOptions.map((m, i) => (
-                <button key={i} onClick={m.onPick} style={sx(`display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;padding:8px 11px;border-radius:9px;transition:.12s;background:${m.bg};color:${m.color};border:1px solid ${m.border};`)}>{m.label}</button>
+                <button key={i} onClick={m.onPick} disabled={m.disabled} title={m.title} style={sx(`display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;padding:8px 11px;border-radius:9px;transition:.12s;background:${m.bg};color:${m.color};border:1px solid ${m.border};opacity:${m.opacity};cursor:${m.disabled ? 'not-allowed' : 'pointer'};`)}>{m.label}</button>
               ))}
+              {!v.providerOptions.length && (
+                <span style={sx('font-size:12.5px;color:var(--text-3);')}>Keine gefunden.</span>
+              )}
             </div>
           </div>
           <div>
             <label style={sx('font-size:12px;font-weight:600;color:var(--text-2);')}>Skills <span style={sx('color:var(--text-3);font-weight:400;')}>({v.newSkillCount} gewählt)</span></label>
             <div style={sx('display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;')}>
               {v.skillOptions.map((s, i) => (
-                <button key={i} onClick={s.onToggle} style={sx(`display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:12px;padding:7px 10px;border-radius:9px;transition:.12s;background:${s.bg};color:${s.color};border:1px solid ${s.border};`)}>
+                <button key={i} onClick={s.onToggle} disabled={s.disabled} style={sx(`display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:12px;padding:7px 10px;border-radius:9px;transition:.12s;background:${s.bg};color:${s.color};border:1px solid ${s.border};opacity:${s.opacity};cursor:${s.disabled ? 'not-allowed' : 'pointer'};`)}>
                   <span style={sx('font-size:13px;')}>{s.mark}</span>{s.name}
                 </button>
               ))}
             </div>
+            {v.skillsNote && (
+              <div style={sx('margin-top:8px;font-size:12px;color:var(--text-3);line-height:1.5;')}>{v.skillsNote}</div>
+            )}
           </div>
           <div>
             <label style={sx('font-size:12px;font-weight:600;color:var(--text-2);')}>Instruktionen</label>

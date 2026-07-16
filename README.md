@@ -32,21 +32,25 @@ npm install
 npm run dev                   # http://localhost:5173  (Vite proxies /api → :8787)
 ```
 
-Open http://localhost:5173. You'll land on a **login screen** — register a new account
-(you get your own workspace, seeded with example projects) or click **„Als Demo-Nutzer
-ansehen"** (`demo@orchestra.local` / `demo1234`). Each user's data is fully isolated.
+Open http://localhost:5173. You'll land on a **login screen** — register an account to get
+your own empty workspace, then create your first project. Each user's data is fully isolated.
 
-Without an `ANTHROPIC_API_KEY` the app is fully usable as a persistent tool — only real
-agent **runs** are gated (the ticket shows a clear hint). With a key set in `server/.env`,
-click **„Agent starten"** on a ticket and watch the agent reason, call skills, and stream
-results into the thread.
+What an agent can run on is **detected, not configured**: Anthropic models appear once
+`ANTHROPIC_API_KEY` is set, and local CLI agents appear if they're on your `PATH`. **Claude
+Code needs no API key** — it uses its own login. Einstellungen shows what was found and, for
+anything missing, why. Assign a provider to an agent, hit **„Agent starten"** on a ticket, and
+its reasoning and tool calls stream into the thread.
+
+Local CLI agents run **in the project's working directory** (Projekt-Einstellungen) and may
+write files there — keep it under Git so you can roll changes back.
 
 ### Configuration (`server/.env`)
 
 | Var | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Enables real agent runs. |
-| `ORCHESTRA_MODEL` | Model for runs (default `claude-opus-4-8`). |
+| `ORCHESTRA_MODEL` | Fallback model for agents with no provider set (default `claude-opus-4-8`). |
+| `ORCHESTRA_CLI_TIMEOUT_MS` | Hard limit for a local CLI run (default 600000 = 10 min). |
 | `JIRA_EMAIL` / `JIRA_API_TOKEN` | Jira REST auth (issue import). |
 | `SLACK_BOT_TOKEN` | Slack `chat.postMessage`. |
 | `PORT` / `DATABASE_FILE` | API port / SQLite file. |
@@ -79,7 +83,10 @@ src/                      ← React frontend
 server/src/
   index.ts                ← Fastify routes
   db.ts                   ← SQLite schema, seed, repository
-  agent/runner.ts         ← real Claude agent loop (tool use) + activity persistence
+  agent/runner.ts         ← thin orchestrator: resolve adapter, persist + broadcast steps
+  agent/providers/        ← one adapter per way of running: Anthropic models, local CLIs
+  agent/prompt.ts         ← system/task prompts, shared by every provider
+  agent/skills.ts         ← reasoning-skill tools (cloud providers only)
   sse.ts                  ← per-ticket Server-Sent-Events bus
   integrations.ts         ← Jira + Slack clients
 ```
@@ -97,15 +104,21 @@ Auth: `POST /api/auth/register` · `POST /api/auth/login` · `POST /api/auth/log
 `GET /api/state` · `POST /api/projects` · `PATCH /api/projects/:id` ·
 `POST /api/projects/:id/agents` · `POST /api/projects/:id/tickets` · `PATCH /api/tickets/:id` ·
 `POST /api/tickets/:id/comment` · `POST /api/tickets/:id/plan-answer` ·
-`POST /api/tickets/:id/run` · `GET /api/tickets/:id/stream` · `POST /api/skills/install` ·
-`GET /api/projects/:id/jira-issues` · `POST /api/projects/:id/slack-test`
+`POST /api/tickets/:id/run` · `GET /api/tickets/:id/stream` · `GET /api/providers` ·
+`PATCH /api/skills/:name` · `GET /api/projects/:id/jira-issues` ·
+`POST /api/projects/:id/slack-test`
 
 ## Build
 
 ```bash
 npm run build            # frontend (tsc + vite build)
-cd server && npm run typecheck
+npm test                 # frontend unit tests (vitest)
+cd server && npm run typecheck && npm test
 ```
+
+Server tests cover the CLI event mapping against **recorded real output** from
+`claude --print --output-format stream-json` (`server/src/agent/providers/__fixtures__/`) —
+that format belongs to another project and is the most likely thing to break.
 
 ## Deployment (single unit)
 
@@ -124,7 +137,7 @@ docker compose up --build        # http://localhost:8787
   `better-sqlite3` server deps, then a slim runtime that runs the API and serves `dist/`.
 - SQLite lives on the **`./data` volume** (`DATABASE_FILE=/data/orchestra.db`), so your
   data survives container rebuilds. No external database required.
-- Log in with the demo account (`demo@orchestra.local` / `demo1234`) or register.
+- Register an account on first visit; each user gets an isolated workspace.
 
 To run the same single-unit setup without Docker:
 
@@ -137,8 +150,8 @@ WEB_DIR=../dist DATABASE_FILE=./orchestra.db npm start
 
 ### CI
 
-`.github/workflows/ci.yml` runs on every push/PR to `main`: it typechecks + builds the
-frontend, typechecks the server, and builds the Docker image.
+`.github/workflows/ci.yml` runs on every push/PR to `main`: it typechecks, tests, and builds
+the frontend, typechecks + tests the server, and builds the Docker image.
 
 ## Status & roadmap
 
@@ -146,19 +159,26 @@ This is a phased build toward the full product:
 
 - **Phase 1 — Backend + DB + persistence.** ✅ Done. Everything you do persists in SQLite;
   the frontend hydrates from the API.
-- **Phase 2 — Real KI agents.** ✅ Done. Agents run tickets via the Claude API with tool
-  use; activity streams live over SSE and is persisted. Skill *side effects* are currently
-  illustrative (the model's reasoning is real) — wire individual skills to real integrations
-  as needed in `server/src/agent/runner.ts`.
+- **Phase 2 — Real KI agents.** ✅ Done. Agents run tickets through a **provider adapter**
+  (`server/src/agent/providers/`); activity streams live over SSE and is persisted. Only
+  reasoning skills (`brainstorm`, `grillme`) ship today — they have no external side effect,
+  so the tool result hands the work back to the model. Skills needing a real integration
+  (search, mail, SQL) must be wired up in `server/src/agent/skills.ts` before being offered.
+  Skills apply to cloud providers only; local CLI agents bring their own tools.
 - **Phase 3 — Jira/Slack.** ✅ Real clients in place (`server/src/integrations.ts`), gated by
   credentials.
 - **Phase 4a — Auth + Multi-User.** ✅ Done. Email+password accounts with cookie sessions
-  (`server/src/db.ts`, `server/src/index.ts`); every user gets an isolated, seeded workspace
-  (data scoped by `owner_id` with composite primary keys). A `demo@orchestra.local` account
-  is created on first boot.
+  (`server/src/db.ts`, `server/src/index.ts`); every user gets an isolated, empty workspace
+  (data scoped by `owner_id` with composite primary keys).
 - **Phase 4b — Deployment.** ✅ Done. Single-unit **Docker** image + `docker-compose.yml`
   (the API serves the built SPA), SQLite persisted on a volume, and **GitHub Actions CI**
-  (frontend build, server typecheck, Docker build). SQLite stays the system of record — no
-  external database needed.
+  (frontend + server typecheck, **tests**, Docker build). SQLite stays the system of record —
+  no external database needed.
+- **Phase 5 — Real providers.** ✅ Done. The provider list is **detected, not hardcoded**:
+  Anthropic models come from the Models API (what your key may actually use), local CLIs from
+  a PATH lookup. `GET /api/providers` returns the catalog with real availability, and the
+  agent's provider is finally honoured — picking a model passes it to the API, picking
+  **Claude Code** runs the CLI as a subprocess in the project's **working directory** and
+  streams its tool calls into the ticket thread.
 
 Ported from a Claude Design HTML/CSS/JS prototype; the frontend matches it pixel-for-pixel.

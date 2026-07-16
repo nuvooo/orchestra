@@ -1,4 +1,4 @@
-import { useOrchestra, WIZ_STEPS, PROVIDERS } from './OrchestraContext'
+import { useOrchestra, WIZ_STEPS } from './OrchestraContext'
 import { planScript } from '../lib/plan'
 import {
   provById,
@@ -12,6 +12,18 @@ import {
 } from '../lib/styleHelpers'
 import type { Project, Ticket, Agent, Phase } from './types'
 
+// A fresh workspace has no project yet, but every view model below is computed
+// unconditionally. This blank shell keeps them harmless (empty lists, zero
+// counts) until the user creates one; App renders an empty state instead of the
+// board while `hasProjects` is false.
+const BLANK_PROJECT: Project = {
+  id: '', name: '', hue: 250,
+  jira: { connected: false, url: '' },
+  slack: { connected: false, channel: '' },
+  designMd: '', instructions: '',
+  envs: [], jiraInbox: [], roles: [], agents: [], tickets: [],
+}
+
 /**
  * Faithful port of the prototype's `renderVals()` — builds every view model the
  * templates consume from the current state + bound action handlers.
@@ -21,14 +33,14 @@ export function useDerived() {
   const st = state
   const a = actions
   const dark = st.theme === 'dark'
-  const proj = a.curProj()
+  const proj = a.curProj() ?? BLANK_PROJECT
   const av = (h: number | null) => avatar(st.theme, h)
   const ticketTeam = a.ticketTeam
 
   const projIcon = (p: Project) => ({
     iconBg: `oklch(${dark ? 0.34 : 0.93} 0.07 ${p.hue})`,
     iconColor: `oklch(${dark ? 0.86 : 0.44} 0.15 ${p.hue})`,
-    initial: p.name[0].toUpperCase(),
+    initial: p.name[0]?.toUpperCase() ?? '·',
   })
   const curProject = { name: proj.name, ...projIcon(proj) }
 
@@ -57,7 +69,7 @@ export function useDerived() {
   const blockedCount = proj.tickets.filter((t) => t.status === 'blocked').length
 
   const provInfo = (ag: Agent) => {
-    const pv = provById(ag.provider)
+    const pv = provById(st.providers, ag.provider)
     const ps = provStyle(pv.kind)
     return { provLabel: pv.label, provKind: ps.kindLabel, provShort: ps.short, provBg: ps.bg, provColor: ps.color, provIconLocal: pv.kind === 'local' }
   }
@@ -227,7 +239,7 @@ export function useDerived() {
         })
         const extraCount = team.length > 3 ? '+' + (team.length - 3) : ''
         const primary = team[0] || ({ name: '?', provider: 'claude-sonnet-4.5' } as any)
-        const pv = provById(primary.provider)
+        const pv = provById(st.providers, primary.provider)
         const ps = provStyle(pv.kind)
         const moveOptions = STATUS_LIST.map(([sv, sl]) => {
           const m = ticketStatus(sv)
@@ -280,7 +292,7 @@ export function useDerived() {
     const ag = team[0] || ({ name: 'Agent', role: '', hue: 274, provider: 'claude-sonnet-4.5' } as any)
     const aAv = av(ag.hue)
     const sMeta = ticketStatus(tk.status)
-    const pv = provById(ag.provider)
+    const pv = provById(st.providers, ag.provider)
     const ps = provStyle(pv.kind)
     // Activity (agent steps + user comments + plan answers) is the canonical
     // thread, persisted by the backend.
@@ -399,7 +411,7 @@ export function useDerived() {
     })
     const teamRail = team.map((m) => {
       const mav = av(m.hue)
-      const mpv = provById(m.provider)
+      const mpv = provById(st.providers, m.provider)
       const mps = provStyle(mpv.kind)
       const working = tk.status === 'in_progress' && !!activity.find((x) => x.actorName === m.name)
       return { name: m.name, role: m.role, initial: m.name[0], bg: mav.avatarBg, color: mav.avatarColor, provLabel: mpv.label, provKind: mps.kindLabel, provColor: mps.color, provBg: mps.bg, provIcon: mpv.kind === 'local' ? '▮' : '☁', working }
@@ -472,19 +484,46 @@ export function useDerived() {
   // create agent
   const na = st.newAgent
   const kindBtn = (k: string) => (na.providerKind === k ? { bg: 'var(--accent-2)', color: 'var(--accent)', border: 'var(--accent)' } : { bg: 'var(--surface-2)', color: 'var(--text-2)', border: 'var(--border)' })
-  const providerOptions = PROVIDERS.filter((p) => p.kind === na.providerKind).map((m) => ({ label: m.label, onPick: () => a.pickProvider(m.id), bg: m.id === na.provider ? 'var(--accent-2)' : 'var(--surface-2)', color: m.id === na.provider ? 'var(--accent)' : 'var(--text-2)', border: m.id === na.provider ? 'var(--accent)' : 'var(--border)' }))
+  const providerOptions = st.providers
+    .filter((p) => p.kind === na.providerKind)
+    .map((m) => ({
+      label: m.label,
+      title: m.available ? (m.version ? `Version ${m.version}` : m.label) : (m.reason || 'nicht verfügbar'),
+      disabled: !m.available,
+      onPick: () => { if (m.available) a.pickProvider(m.id) },
+      bg: m.id === na.provider ? 'var(--accent-2)' : 'var(--surface-2)',
+      color: !m.available ? 'var(--text-3)' : m.id === na.provider ? 'var(--accent)' : 'var(--text-2)',
+      border: m.id === na.provider ? 'var(--accent)' : 'var(--border)',
+      opacity: m.available ? '1' : '0.5',
+    }))
+  // Local CLI agents bring their own tools and know nothing about Orchestra's
+  // skill list — ticking a skill there would have no effect, so don't offer it.
+  const skillsApply = na.providerKind === 'cloud'
   const skillOptions = st.skills.map((k) => {
-    const sel = na.skills.includes(k.name)
-    return { name: k.name, onToggle: () => a.toggleNewSkill(k.name), mark: sel ? '✓' : '+', bg: sel ? 'var(--accent-2)' : 'var(--surface-2)', color: sel ? 'var(--accent)' : 'var(--text-2)', border: sel ? 'var(--accent)' : 'var(--border)' }
+    const sel = skillsApply && na.skills.includes(k.name)
+    return {
+      name: k.name,
+      onToggle: () => { if (skillsApply) a.toggleNewSkill(k.name) },
+      disabled: !skillsApply,
+      mark: sel ? '✓' : '+',
+      bg: sel ? 'var(--accent-2)' : 'var(--surface-2)',
+      color: !skillsApply ? 'var(--text-3)' : sel ? 'var(--accent)' : 'var(--text-2)',
+      border: sel ? 'var(--accent)' : 'var(--border)',
+      opacity: skillsApply ? '1' : '0.45',
+    }
   })
+  const skillsNote = skillsApply ? '' : 'Lokale CLI-Agenten bringen eigene Werkzeuge mit — Orchestra-Skills gelten hier nicht.'
 
   const skills = st.skills.map((k) => ({ ...k, onToggle: () => a.toggleSkillInstall(k.name), btnLabel: k.installed ? '✓ Installiert' : '+ Hinzufügen', btnBg: k.installed ? 'var(--surface-2)' : 'var(--accent)', btnColor: k.installed ? 'var(--text-2)' : 'var(--accent-text)', btnBorder: k.installed ? 'var(--border)' : 'transparent' }))
 
   const sel = (v: string) => (st.themePref === v ? 'var(--accent)' : 'var(--border)')
-  const providerRows = PROVIDERS.map((p) => {
+  const providerRows = st.providers.map((p) => {
     const ps = provStyle(p.kind)
-    const connected = p.id !== 'gemini-2.5-pro'
-    return { label: p.label, sub: p.kind === 'local' ? 'Lokaler CLI-Provider' : 'Cloud-API', icon: p.kind === 'local' ? '▮' : '☁', provBg: ps.bg, provColor: ps.color, state: connected ? 'Verbunden' : 'Einrichten', stBg: connected ? 'var(--ok-soft)' : 'var(--surface-2)', stColor: connected ? 'var(--ok)' : 'var(--text-2)' }
+    const connected = p.available
+    const sub = p.kind === 'local'
+      ? (p.version ? `Lokale CLI · ${p.version}` : 'Lokale CLI')
+      : 'Cloud-Modell'
+    return { label: p.label, sub: connected ? sub : (p.reason || 'nicht verfügbar'), icon: p.kind === 'local' ? '▮' : '☁', provBg: ps.bg, provColor: ps.color, state: connected ? 'Verfügbar' : 'Nicht verfügbar', stBg: connected ? 'var(--ok-soft)' : 'var(--surface-2)', stColor: connected ? 'var(--ok)' : 'var(--text-2)' }
   })
 
   // project configuration
@@ -494,7 +533,7 @@ export function useDerived() {
   const slackCfg = { connected: sc.connected, channel: sc.channel, statusText: sc.connected ? 'Verbunden' : 'Nicht verbunden', statusColor: sc.connected ? 'var(--ok)' : 'var(--text-3)', statusBg: sc.connected ? 'var(--ok-soft)' : 'var(--surface-2)', btnLabel: sc.connected ? 'Trennen' : 'Verbinden', btnBg: sc.connected ? 'var(--surface-2)' : 'var(--accent)', btnColor: sc.connected ? 'var(--text-2)' : 'var(--accent-text)', btnBorder: sc.connected ? 'var(--border)' : 'transparent' }
   const jiraInbox = (proj.jiraInbox || []).map((it) => ({ key: it.key, title: it.title, type: it.type, typeColor: it.type === 'Bug' ? 'var(--err)' : it.type === 'Story' ? 'var(--accent)' : 'var(--text-2)', onImport: () => a.importJira(it.key) }))
   const envRows = (proj.envs || []).map((e, i) => ({ key: e.key, value: e.value, onKey: (ev: any) => a.setEnvKey(i, ev), onVal: (ev: any) => a.setEnvVal(i, ev), onRemove: () => a.removeEnv(i) }))
-  const projectCfg = { name: proj.name, jira: jiraCfg, slack: slackCfg, jiraInbox, jiraInboxEmpty: jiraInbox.length === 0, designMd: proj.designMd || '', instructions: proj.instructions || '', envRows }
+  const projectCfg = { name: proj.name, jira: jiraCfg, slack: slackCfg, jiraInbox, jiraInboxEmpty: jiraInbox.length === 0, designMd: proj.designMd || '', instructions: proj.instructions || '', workdir: proj.workdir || '', envRows }
 
   // new-project wizard
   const wd = st.wizardData
@@ -541,6 +580,7 @@ export function useDerived() {
     pageTitle,
     hasBlocked: blockedCount > 0,
     blockedCount: String(blockedCount),
+    hasProjects: st.projects.length > 0,
     isDashboard: st.view === 'dashboard',
     isTickets: st.view === 'tickets',
     isTicket: st.view === 'ticket',
@@ -580,9 +620,6 @@ export function useDerived() {
     setTermInput: a.setTermInput,
     submitTerm: a.submitTerm,
     onTermKey: a.onTermKey,
-    skillInput: st.skillInput,
-    setSkillInput: a.setSkillInput,
-    installSkill: a.installSkill,
     ticketModalOpen: st.ticketModalOpen,
     closeTicketModal: a.closeTicketModal,
     submitTicket: a.submitTicket,
@@ -622,6 +659,7 @@ export function useDerived() {
     providerLabel: na.providerKind === 'local' ? 'CLI-Provider' : 'Modell',
     providerOptions,
     skillOptions,
+    skillsNote,
     setLight: () => a.setThemePref('light'),
     setDark: () => a.setThemePref('dark'),
     setSystem: () => a.setThemePref('system'),
@@ -636,6 +674,7 @@ export function useDerived() {
     setSlackChannel: a.setSlackChannel,
     setDesignMd: a.setDesignMd,
     setInstructions: a.setInstructions,
+    setWorkdir: a.setWorkdir,
     addEnv: a.addEnv,
     workflowAgents,
     hasWorkflow: workflowAgents.length > 0,
